@@ -50,4 +50,7 @@ complete -o "nospace" -W "Contacts Calendar Dock Finder Mail Safari iTunes Syste
 export PIP_DOWNLOAD_CACHE=$HOME/.pip/cache
 #export PIP_REQUIRE_VIRTUALENV=true
 
-[ -f /usr/local/etc/bash_completion ] && . /usr/local/etc/bash_completion
+# Only source completions if brew is available
+if command -v brew >/dev/null 2>&1; then
+    [ -f "$(brew --prefix)/etc/bash_completion" ] && . "$(brew --prefix)/etc/bash_completion"
+fi
