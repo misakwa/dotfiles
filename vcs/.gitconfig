@@ -84,7 +84,7 @@ name = misakwa
 email = misakwa@noreply.com
 
 [hub]
-protocol = https
+protocol = ssh
 
 [credential]
 helper = osxkeychain
