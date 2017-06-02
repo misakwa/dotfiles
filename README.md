@@ -31,6 +31,3 @@ $ git clone https://github.com/misakwa/dotfiles.git ~/.dotfiles
 $ cd ~/.dotfiles
 $ stow -R -t $HOME -v -d $HOME/.dotfiles bash tmux vcs
 ```
-
-## TODO:
-- [ ] TODO: Fix .gitignore file not being stowed as expected
