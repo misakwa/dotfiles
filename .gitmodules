@@ -1,0 +1,4 @@
+[submodule "dotvim"]
+	path = vim/.vim
+	url = git@github.com:misakwa/dotvim.git
+	branch = fix/new-modules
