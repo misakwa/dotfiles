@@ -1,6 +1,6 @@
 # Add `~/bin` to the `$PATH`
 # TODO: Move this into exports
-export PATH="$HOME/bin:/usr/local/sbin:/usr/local/bin:$PATH"
+export PATH="bin:$HOME/bin:/usr/local/sbin:/usr/local/bin:$PATH"
 
 
 # Load the shell dotfiles, and then some:
