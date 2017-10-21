@@ -80,8 +80,8 @@
     }; f"
 
 [user]
-name = misakwa
-email = misakwa@noreply.com
+	name = misakwa
+	email = misakwa@users.noreply.github.com
 
 [hub]
 protocol = ssh
