@@ -80,14 +80,14 @@
     }; f"
 
 [user]
-	name = misakwa
-	email = misakwa@users.noreply.github.com
+    name = misakwa
+    email = misakwa@users.noreply.github.com
 
 [hub]
 protocol = ssh
 
 [credential]
-helper = osxkeychain
+; helper = osxkeychain
 
 [apply]
 
@@ -163,6 +163,7 @@ helper = osxkeychain
     insteadOf = "gh:"
     pushInsteadOf = "github:"
     pushInsteadOf = "git://github.com/"
+    pushInsteadOf = "https://github.com/"
 
 [url "git://github.com/"]
 
@@ -173,6 +174,7 @@ helper = osxkeychain
     insteadOf = "gst:"
     pushInsteadOf = "gist:"
     pushInsteadOf = "git://gist.github.com/"
+    pushInsteadOf = "https://gist.github.com/"
 
 [url "git://gist.github.com/"]
 
