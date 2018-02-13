@@ -1,8 +1,3 @@
-# Add `~/bin` to the `$PATH`
-# TODO: Move this into exports
-export PATH="bin:$HOME/bin:/usr/local/sbin:/usr/local/bin:$PATH"
-
-
 # Load the shell dotfiles, and then some:
 # * ~/.path can be used to extend `$PATH`.
 # * ~/.extra can be used for other settings you don’t want to commit.
@@ -27,10 +22,6 @@ for option in autocd globstar; do
     shopt -s "$option" 2> /dev/null
 done
 
-# Prefer US English and use UTF-8
-export LC_ALL="en_US.UTF-8"
-export LANG="en_US"
-
 # Add tab completion for SSH hostnames based on ~/.ssh/config, ignoring wildcards
 [ -e "$HOME/.ssh/config" ] && complete -o "default" -o "nospace" -W "$(grep "^Host" ~/.ssh/config | grep -v "[?*]" | cut -d " " -f2)" scp sftp ssh
 
@@ -45,10 +36,6 @@ complete -o "nospace" -W "Contacts Calendar Dock Finder Mail Safari iTunes Syste
 # export VIRTUALENVWRAPPER_VIRTUALENV=`which virtualenv`
 # export VIRTUALENVWRAPPER_SCRIPT=`which virtualenvwrapper.sh`
 # source `which virtualenvwrapper_lazy.sh`
-
-# pip configuration
-export PIP_DOWNLOAD_CACHE=$HOME/.pip/cache
-#export PIP_REQUIRE_VIRTUALENV=true
 
 # Only source completions if brew is available
 if command -v brew >/dev/null 2>&1; then
