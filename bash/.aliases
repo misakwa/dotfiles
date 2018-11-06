@@ -14,7 +14,20 @@ alias p="cd ~/Projects"
 alias g="git"
 alias h="history"
 alias j="jobs"
-alias v="vim"
+
+if command -v nvim >/dev/null 2>&1; then
+    alias v="nvim"
+    alias vi="nvim"
+    alias vim="nvim"
+elif command -v vimx >/dev/null 2>&1; then
+    alias v="vimx"
+    alias vi="vimx"
+    alias vim="vimx"
+else
+    alias v="vim"
+    alias vi="vim"
+fi
+
 alias m="mate ."
 alias s="subl ."
 alias o="open"

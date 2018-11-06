@@ -32,3 +32,5 @@ export PATH="bin:$HOME/bin:$HOME/.rbenv/bin:$HOME/cargo/bin:/usr/local/sbin:/usr
 if command -v rbenv >/dev/null 2>&1; then
     eval "$(rbenv init -)"
 fi
+
+export ERL_AFLAGS="-kernel shell_history enabled"

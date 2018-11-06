@@ -2,7 +2,15 @@ source $HOME/.zsh/antigen.zsh
 
 antigen use oh-my-zsh
 
+antigen bundle command-not-found
+
 antigen bundle git
+
+antigen bundle docker
+antigen bundle docker-compose
+antigen bundle docker-machine
+antigen bundle minikube
+
 antigen bundle zsh-users/zsh-syntax-highlighting
 antigen bundle zsh-users/zsh-completions
 
@@ -14,5 +22,3 @@ for file in ~/.{path,exports,aliases,functions,extra}; do
     [ -r "$file" ] && source "$file"
 done
 unset file
-
-# export PATH="bin:$HOME/bin:$HOME/.cargo/bin:$HOME/.rbenv/bin:$PATH"
