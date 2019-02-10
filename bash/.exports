@@ -27,10 +27,9 @@ export GOPATH=$HOME/go
 export PIP_DOWNLOAD_CACHE=$HOME/.pip/cache
 #export PIP_REQUIRE_VIRTUALENV=true
 
-export PATH="bin:$HOME/bin:$HOME/.rbenv/bin:$HOME/cargo/bin:/usr/local/sbin:/usr/local/bin:$PATH"
-
-if command -v rbenv >/dev/null 2>&1; then
-    eval "$(rbenv init -)"
-fi
-
 export ERL_AFLAGS="-kernel shell_history enabled"
+
+# export VIRTUALENVWRAPPER_PYTHON=`which python`
+# export VIRTUALENVWRAPPER_VIRTUALENV=`which virtualenv`
+# export VIRTUALENVWRAPPER_SCRIPT=`which virtualenvwrapper.sh`
+# source `which virtualenvwrapper_lazy.sh`

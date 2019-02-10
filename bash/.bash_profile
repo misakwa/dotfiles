@@ -31,13 +31,5 @@ complete -W "NSGlobalDomain" defaults
 
 # Add `killall` tab completion for common apps
 complete -o "nospace" -W "Contacts Calendar Dock Finder Mail Safari iTunes SystemUIServer Terminal Twitter" killall
-# TODO: Move these into exports
-# export VIRTUALENVWRAPPER_PYTHON=`which python`
-# export VIRTUALENVWRAPPER_VIRTUALENV=`which virtualenv`
-# export VIRTUALENVWRAPPER_SCRIPT=`which virtualenvwrapper.sh`
-# source `which virtualenvwrapper_lazy.sh`
 
-# Only source completions if brew is available
-if command -v brew >/dev/null 2>&1; then
-    [ -f "$(brew --prefix)/etc/bash_completion" ] && . "$(brew --prefix)/etc/bash_completion"
-fi
+[ -r "~/.nodenv/completions/nodenv.bash" ] && source "~/.nodenv/completions/nodenv.bash"

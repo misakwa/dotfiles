@@ -22,3 +22,5 @@ for file in ~/.{path,exports,aliases,functions,extra}; do
     [ -r "$file" ] && source "$file"
 done
 unset file
+
+[ -r "~/.nodenv/completions/nodenv.zsh" ] && source "~/.nodenv/completions/nodenv.zsh"
