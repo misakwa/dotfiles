@@ -11,8 +11,6 @@ antigen bundle docker-compose
 antigen bundle docker-machine
 antigen bundle minikube
 
-antigen bundle virtualenv
-antigen bundle virtualenvwrapper
 antigen bundle zsh-users/zsh-syntax-highlighting
 antigen bundle zsh-users/zsh-completions
 
