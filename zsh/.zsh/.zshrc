@@ -24,3 +24,5 @@ done
 unset file
 
 [ -r "~/.nodenv/completions/nodenv.zsh" ] && source "~/.nodenv/completions/nodenv.zsh"
+
+autoload -U +X bashcompinit && bashcompinit
