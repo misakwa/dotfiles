@@ -6,11 +6,6 @@ antigen bundle command-not-found
 
 antigen bundle git
 
-antigen bundle docker
-antigen bundle docker-compose
-antigen bundle docker-machine
-antigen bundle minikube
-
 antigen bundle zsh-users/zsh-syntax-highlighting
 antigen bundle zsh-users/zsh-completions
 
