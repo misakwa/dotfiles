@@ -28,8 +28,3 @@ export PIP_DOWNLOAD_CACHE=$HOME/.pip/cache
 #export PIP_REQUIRE_VIRTUALENV=true
 
 export ERL_AFLAGS="-kernel shell_history enabled"
-
-# export VIRTUALENVWRAPPER_PYTHON=`which python`
-# export VIRTUALENVWRAPPER_VIRTUALENV=`which virtualenv`
-# export VIRTUALENVWRAPPER_SCRIPT=`which virtualenvwrapper.sh`
-# source `which virtualenvwrapper_lazy.sh`

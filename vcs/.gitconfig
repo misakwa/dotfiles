@@ -82,6 +82,7 @@
 [user]
     name = misakwa
     email = misakwa@users.noreply.github.com
+    signingkey = 68DB603EB58A33E8
 
 [hub]
 protocol = ssh
@@ -176,3 +177,12 @@ protocol = ssh
 [url "git://gist.github.com/"]
 
     insteadOf = "gist:"
+[init]
+    defaultBranch = main
+[credential]
+    helper = /home/michael/bin/git-credential-manager-core
+    credentialStore = gpg
+[credential "https://dev.azure.com"]
+    useHttpPath = true
+[commit]
+    gpgsign = true

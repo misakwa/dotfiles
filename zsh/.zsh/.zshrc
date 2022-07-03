@@ -18,6 +18,8 @@ for file in ~/.{path,exports,aliases,functions,extra}; do
 done
 unset file
 
-[ -r "~/.nodenv/completions/nodenv.zsh" ] && source "~/.nodenv/completions/nodenv.zsh"
+# autoload -U +X bashcompinit && bashcompinit
+autoload -Uz compinit && compinit
 
-autoload -U +X bashcompinit && bashcompinit
+# Created by `pipx` on 2022-03-19 12:06:44
+export PATH="$PATH:/home/michael/.local/bin"
