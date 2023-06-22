@@ -16,3 +16,9 @@ Thumbs.db
 # Tag files
 tags
 .tags
+
+# ASDF
+.tool-versions
+
+# VSCode
+.vscode

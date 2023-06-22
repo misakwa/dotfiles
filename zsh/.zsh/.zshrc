@@ -18,7 +18,9 @@ for file in ~/.{path,exports,aliases,functions,extra}; do
 done
 unset file
 
-# autoload -U +X bashcompinit && bashcompinit
+# append completions to fpath
+fpath=(${ASDF_DIR}/completions $fpath)
+# initialise completions with ZSH's compinit
 autoload -Uz compinit && compinit
 
 # Created by `pipx` on 2022-03-19 12:06:44

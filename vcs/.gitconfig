@@ -156,27 +156,27 @@ protocol = ssh
 
 # URL shorthands
 
-[url "git@github.com:"]
+; [url "git@github.com:"]
 
-    insteadOf = "gh:"
-    pushInsteadOf = "github:"
-    pushInsteadOf = "git://github.com/"
-    pushInsteadOf = "https://github.com/"
+;     insteadOf = "gh:"
+;     pushInsteadOf = "github:"
+;     pushInsteadOf = "git://github.com/"
+;     pushInsteadOf = "https://github.com/"
 
-[url "git://github.com/"]
+; [url "git://github.com/"]
 
-    insteadOf = "github:"
+;     insteadOf = "github:"
 
-[url "git@gist.github.com:"]
+; [url "git@gist.github.com:"]
 
-    insteadOf = "gst:"
-    pushInsteadOf = "gist:"
-    pushInsteadOf = "git://gist.github.com/"
-    pushInsteadOf = "https://gist.github.com/"
+;     insteadOf = "gst:"
+;     pushInsteadOf = "gist:"
+;     pushInsteadOf = "git://gist.github.com/"
+;     pushInsteadOf = "https://gist.github.com/"
 
-[url "git://gist.github.com/"]
+; [url "git://gist.github.com/"]
 
-    insteadOf = "gist:"
+;     insteadOf = "gist:"
 [init]
     defaultBranch = main
 [credential]
