@@ -1,10 +1,14 @@
 # Default config for sway
 #
-# Copy this to ~/.config/sway/config and edit it to your liking.
+#https://github.com/Alexays/Waybar/pull/1244 Copy this to ~/.config/sway/config and edit it to your liking.
 #
 # Read `man 5 sway` for a complete reference.
 
 ### Variables
+set $brightness_step 1
+set $lock_timeout 6000
+set $screen_timeout 3000
+set $volume_step 1
 #
 # Logo key. Use Mod1 for Alt.
 set $mod Mod4
@@ -151,13 +155,14 @@ output * bg /usr/share/backgrounds/default.png fill
     # You can "split" the current object of your focus with
     # $mod+b or $mod+v, for horizontal and vertical splits
     # respectively.
-    bindsym $mod+b splith
-    bindsym $mod+v splitv
+    bindsym $mod+b split horizontal
+    bindsym $mod+v split vertical
+    bindsym $mod+t split toggle
 
     # Switch the current container between different layout styles
     bindsym $mod+s layout stacking
     bindsym $mod+w layout tabbed
-    bindsym $mod+e layout toggle split
+    bindsym $mod+e layout toggle splith splitv stacking tabbed
 
     # Make the current focus fullscreen
     bindsym $mod+f fullscreen
@@ -170,6 +175,9 @@ output * bg /usr/share/backgrounds/default.png fill
 
     # Move focus to the parent container
     bindsym $mod+a focus parent
+
+    # Move focus to the child container
+    bindsym $mod+Shift+a focus child
 #
 # Scratchpad:
 #

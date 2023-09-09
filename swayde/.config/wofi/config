@@ -1,7 +1,7 @@
 style=$HOME/.config/wofi/style.css
 xoffset=710
 yoffset=275
-show=drun
+show=drun,run,dmenu
 width=500
 height=500
 always_parse_args=true
