@@ -1,13 +1,13 @@
 # Default config for sway
-#
-#https://github.com/Alexays/Waybar/pull/1244 Copy this to ~/.config/sway/config and edit it to your liking.
+# font pango:Source Code Pro Medium 10
+font pango:monospace 10
 #
 # Read `man 5 sway` for a complete reference.
 
 ### Variables
 set $brightness_step 1
-set $lock_timeout 6000
-set $screen_timeout 3000
+set $lock_timeout 600
+set $screen_timeout 300
 set $volume_step 1
 #
 # Logo key. Use Mod1 for Alt.
@@ -32,7 +32,7 @@ set $term kitty
 # set $menu $rofi_cmd -show combi -combi-modes drun#run -modes combi
 
 set $wofi_cmd wofi --term='$term'
-set $menu wofi --hide-scroll --show=drun,run,dmenu --matching=fuzzy --insensitive | xargs swaymsg exec --
+set $menu wofi --hide-scroll --matching=fuzzy --insensitive | xargs swaymsg exec --
 
 ### Output configuration
 #

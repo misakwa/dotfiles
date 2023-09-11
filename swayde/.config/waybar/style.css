@@ -17,7 +17,7 @@ tooltip {
 	border-width: 2px;
 	border-style: solid;
 	border-color: #262626;
-	}
+}
 
 #workspaces button {
     padding: 5px 10px;
@@ -42,7 +42,7 @@ tooltip {
 	border-radius: 15px;
 }
 
-#custom-date, #clock, #battery, #pulseaudio, #network, #workspaces {
+#clock, #battery, #pulseaudio, #network, #workspaces, #mode, #taskbar, #idle_inhibitor {
 	background-color: #0f0f0f;
 	padding: 5px 10px;
 	margin: 5px 0px;
