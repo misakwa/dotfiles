@@ -1,4 +1,6 @@
 ignore-empty-password
+indicator-caps-lock
+indicator-idle-visible
 disable-caps-lock-text
 image=$HOME/.config/sway/wallpapers/lock-screen-beach-clouds-rock.jpg
 
