@@ -115,22 +115,48 @@ protocol = ssh
 
 [color "branch"]
 
-    current = yellow reverse
-    local = yellow
-    remote = green
+	current = normal reverse
+	local = normal
+	remote = normal
+	plain = normal
+	upstream = normal
 
 [color "diff"]
 
-    meta = yellow bold
-    frag = magenta bold # line info
-    old = red # deletions
-    new = green # additions
+	meta = normal dim
+	frag = normal dim
+	old = 7 1
+	new = 15 2
+	commit = normal
+	newMoved = 15 3
+	oldMovedAlternativeDimmed = 7 5 dim
+	oldMovedAlternative = 7 5
+	contextBold = normal bold
+	newBold = 15 2 bold
+	context = normal
+	oldMoved = 7 3
+	oldBold = 7 1 bold
+	newMovedDimmed = 15 3 dim
+	func = normal dim
+	newDimmed = 15 2 dim
+	newMovedAlternative = 15 5
+	newMovedAlternativeDimmed = 15 5 dim
+	whitespace = normal 9
+	oldMovedDimmed = 7 3 dim
+	oldDimmed = 7 1 dim
 
 [color "status"]
 
-    added = yellow
-    changed = green
-    untracked = cyan
+	added = 10 normal
+	changed = 11 normal
+	untracked = normal dim
+	branch = normal
+	updated = 10 normal
+	localbranch = normal
+	header = normal
+	remotebranch = normal
+	nobranch = normal bold
+	unmerged = 9 normal
 
 [diff]
 
@@ -187,4 +213,28 @@ protocol = ssh
 [commit]
     gpgsign = true
 [rebase]
-	autoStash = true
+	autoStash = false
+; [difftool]
+;   prompt = true
+; [diff]
+;   tool = nvimdiff
+; 	colorMoved = zebra
+; [difftool "nvimdiff"]
+;   cmd = "nvim -d \"$LOCAL\" \"$REMOTE\""
+; [color "remote"]
+; 	hint = normal dim
+; 	success = 2 normal
+; 	error = 1 normal
+; 	warning = 3 normal
+; [color "interactive"]
+; 	header = normal dim bold
+; 	prompt = 15 4
+; 	help = normal dim
+; 	error = normal bold
+; [color "decorate"]
+; 	branch = normal
+; 	tag = normal
+; 	remotebranch = normal
+; 	stash = normal dim
+; 	grafted = normal bold
+; 	HEAD = normal italic
