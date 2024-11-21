@@ -1,27 +1,27 @@
-source $HOME/.zsh/antigen.zsh
+[[ -r ~/.zsh/znap/znap.zsh ]] ||
+    git clone --depth 1 -- https://github.com/marlonrichert/zsh-snap.git ~/.zsh/znap
 
-antigen use oh-my-zsh
+source ~/.zsh/znap/znap.zsh
 
-antigen bundle command-not-found
+bindkey -e
 
-antigen bundle git
 
-antigen bundle zsh-users/zsh-syntax-highlighting
-antigen bundle zsh-users/zsh-completions
+znap prompt sindresorhus/pure
 
-antigen theme robbyrussell
+znap source ohmyzsh/ohmyzsh lib/{git,history}
 
-antigen apply
+znap source marlonrichert/zsh-edit
+znap source marlonrichert/zsh-autocomplete
+
+ZSH_AUTOSUGGEST_STRATEGY=( history )
+znap source zsh-users/zsh-autosuggestions
+
+ZSH_HIGHLIGHT_HIGHLIGHTERS=( main brackets )
+znap source zsh-users/zsh-syntax-highlighting
 
 for file in ~/.{path,exports,aliases,functions,extra}; do
     [ -r "$file" ] && source "$file"
 done
 unset file
 
-# append completions to fpath
-fpath=(${ASDF_DIR}/completions $fpath)
-# initialise completions with ZSH's compinit
-autoload -Uz compinit && compinit
-
-# Created by `pipx` on 2022-03-19 12:06:44
-export PATH="$PATH:/home/michael/.local/bin"
+# fpath=(${ASDF_DIR}/completions $fpath)

@@ -186,3 +186,5 @@ protocol = ssh
     useHttpPath = true
 [commit]
     gpgsign = true
+[rebase]
+	autoStash = true
