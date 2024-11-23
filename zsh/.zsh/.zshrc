@@ -8,7 +8,7 @@ bindkey -e
 
 znap prompt sindresorhus/pure
 
-znap source ohmyzsh/ohmyzsh lib/{git,history}
+znap source ohmyzsh/ohmyzsh lib/{git,history,key-bindings,clipboard} plugins/{asdf,git}
 
 znap source marlonrichert/zsh-edit
 znap source marlonrichert/zsh-autocomplete
