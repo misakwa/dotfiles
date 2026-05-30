@@ -163,6 +163,22 @@ protocol = ssh
     # Detect copies as well as renames
     renames = copies
 
+    # Use kitty diff kitten when invoked via `git difftool`. `git diff`
+    # itself is untouched, so non-kitty terminals / scripts / CI still use
+    # the default pager.
+    tool = kitty
+
+[difftool]
+
+    prompt = false
+
+[difftool "kitty"]
+
+    # Wrapper detects if we're inside kitty; spawns a fresh kitty window if
+    # not, so this works from ghostty/iTerm/SSH too.
+    cmd = ~/.dotfiles/vcs/bin/kitty-diff \"$LOCAL\" \"$REMOTE\"
+    trustExitCode = true
+
 [help]
 
     # Automatically correct and execute mistyped commands

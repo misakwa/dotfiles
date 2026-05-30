@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+# kitty-diff: run `kitten diff` against the given args.
+#   - inside kitty   -> takes over the current window (familiar difftool UX)
+#   - elsewhere      -> spawns a new kitty OS window so it still works from
+#                       ghostty, iTerm, SSH-into-mac, etc.
+# Used by git difftool (see .gitconfig) and by the `kd` shell alias.
+set -e
+
+if [ -n "$KITTY_WINDOW_ID" ]; then
+    exec kitten diff "$@"
+else
+    exec kitty -e kitten diff "$@"
+fi

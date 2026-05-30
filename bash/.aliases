@@ -13,6 +13,10 @@ alias dt="cd ~/Desktop"
 alias p="cd ~/Projects"
 alias g="git"
 alias h="history"
+
+# kitty diff kitten: `kd a b` opens side-by-side diff in kitty (spawns a
+# kitty window if you're not already in one). Files or directories.
+alias kd="~/.dotfiles/vcs/bin/kitty-diff"
 alias j="jobs"
 
 if command -v nvim >/dev/null 2>&1; then
