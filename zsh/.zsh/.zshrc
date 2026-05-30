@@ -10,8 +10,8 @@ znap prompt sindresorhus/pure
 
 znap source ohmyzsh/ohmyzsh lib/{git,history,key-bindings,clipboard} plugins/{asdf,git}
 
-znap source marlonrichert/zsh-edit
-znap source marlonrichert/zsh-autocomplete
+# znap source marlonrichert/zsh-edit
+# znap source marlonrichert/zsh-autocomplete
 
 ZSH_AUTOSUGGEST_STRATEGY=( history )
 znap source zsh-users/zsh-autosuggestions

@@ -221,13 +221,13 @@ protocol = ssh
 ;     insteadOf = "gist:"
 [init]
     defaultBranch = main
-[credential]
-    helper = /home/michael/bin/git-credential-manager-core
-    credentialStore = gpg
+; [credential]
+;     helper = /home/michael/bin/git-credential-manager-core
+;     credentialStore = gpg
 [credential "https://dev.azure.com"]
     useHttpPath = true
 [commit]
-    gpgsign = true
+    gpgsign = false
 [rebase]
 	autoStash = false
 ; [difftool]

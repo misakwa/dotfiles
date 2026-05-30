@@ -5,3 +5,4 @@ fi
 [ -n "$PS1" ] && source ~/.bash_profile;
 
 . "$HOME/.asdf/completions/asdf.bash"
+. "$HOME/.cargo/env"
