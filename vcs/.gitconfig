@@ -160,8 +160,9 @@ protocol = ssh
 
 [diff]
 
-    # Detect copies as well as renames
-    renames = copies
+  # Detect copies as well as renames
+  renames = copies
+  ; external = difftastic
 
     # Use kitty diff kitten when invoked via `git difftool`. `git diff`
     # itself is untouched, so non-kitty terminals / scripts / CI still use
@@ -194,7 +195,7 @@ protocol = ssh
     # Use the Git 1.x.x default to avoid errors on machines with old Git
     # installations. To use `simple` instead, add this to your `~/.extra` file:
     # `git config --global push.default simple`. See http://git.io/mMah-w.
-    default = matching
+	default = current
 
 # URL shorthands
 
@@ -254,3 +255,13 @@ protocol = ssh
 ; 	stash = normal dim
 ; 	grafted = normal bold
 ; 	HEAD = normal italic
+[maintenance]
+	repo = /home/michael/.dotfiles/zsh/.zsh/znap
+	repo = /home/michael/.dotfiles/zsh/.zsh/johanhaleby/kubetail
+	repo = /home/michael/.dotfiles/zsh/.zsh/marlonrichert/zsh-autocomplete
+	repo = /home/michael/.dotfiles/zsh/.zsh/marlonrichert/zsh-edit
+	repo = /home/michael/.dotfiles/zsh/.zsh/ohmyzsh/ohmyzsh
+	repo = /home/michael/.dotfiles/zsh/.zsh/sindresorhus/pure
+	repo = /home/michael/.dotfiles/zsh/.zsh/zsh-users/zsh-autosuggestions
+	repo = /home/michael/.dotfiles/zsh/.zsh/zsh-users/zsh-history-substring-search
+	repo = /home/michael/.dotfiles/zsh/.zsh/zsh-users/zsh-syntax-highlighting

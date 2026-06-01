@@ -8,7 +8,7 @@ bindkey -e
 
 znap prompt sindresorhus/pure
 
-znap source ohmyzsh/ohmyzsh lib/{git,history,key-bindings,clipboard} plugins/{asdf,git}
+znap source ohmyzsh/ohmyzsh lib/{git,history,key-bindings,clipboard} plugins/{command-not-found,asdf,git,aws}
 
 # znap source marlonrichert/zsh-edit
 # znap source marlonrichert/zsh-autocomplete
@@ -16,12 +16,20 @@ znap source ohmyzsh/ohmyzsh lib/{git,history,key-bindings,clipboard} plugins/{as
 ZSH_AUTOSUGGEST_STRATEGY=( history )
 znap source zsh-users/zsh-autosuggestions
 
+znap source zsh-users/zsh-history-substring-search
+
 ZSH_HIGHLIGHT_HIGHLIGHTERS=( main brackets )
-znap source zsh-users/zsh-syntax-highlighting
+# znap source zsh-users/zsh-syntax-highlighting
+
+# znap source johanhaleby/kubetail
+
+eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"
 
 for file in ~/.{path,exports,aliases,functions,extra}; do
     [ -r "$file" ] && source "$file"
 done
 unset file
 
-# fpath=(${ASDF_DIR}/completions $fpath)
+# Paperspace
+export PAPERSPACE_INSTALL="/home/michael/.paperspace"
+export PATH="$PAPERSPACE_INSTALL/bin:$PATH"

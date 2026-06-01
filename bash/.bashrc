@@ -1,8 +1,8 @@
 if [[ -f "/etc/bashrc" ]]; then
-    . /etc/bashrc
+  . /etc/bashrc
 fi
 
-[ -n "$PS1" ] && source ~/.bash_profile;
+[ -n "$PS1" ] && source ~/.bash_profile
 
 . "$HOME/.asdf/completions/asdf.bash"
 . "$HOME/.cargo/env"

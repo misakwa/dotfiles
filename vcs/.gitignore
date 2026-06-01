@@ -22,3 +22,10 @@ tags
 
 # VSCode
 .vscode
+
+# Intellij
+.idea
+
+.aider*
+
+.claude
