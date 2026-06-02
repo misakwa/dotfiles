@@ -5,10 +5,13 @@ source ~/.zsh/znap/znap.zsh
 
 bindkey -e
 
+# PATH and env must be set before plugins load (ohmyzsh asdf bails if
+# `asdf` isn't already in PATH at plugin-load time).
+source ~/.path
 
 znap prompt sindresorhus/pure
 
-znap source ohmyzsh/ohmyzsh lib/{git,history,key-bindings,clipboard} plugins/{command-not-found,asdf,git,aws}
+znap source ohmyzsh/ohmyzsh lib/{git,history,key-bindings,clipboard} plugins/{command-not-found,git,aws}
 
 # znap source marlonrichert/zsh-edit
 # znap source marlonrichert/zsh-autocomplete
@@ -25,7 +28,7 @@ ZSH_HIGHLIGHT_HIGHLIGHTERS=( main brackets )
 
 eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"
 
-for file in ~/.{path,exports,aliases,functions,extra}; do
+for file in ~/.{exports,aliases,functions,extra}; do
     [ -r "$file" ] && source "$file"
 done
 unset file
