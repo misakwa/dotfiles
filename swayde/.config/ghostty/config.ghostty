@@ -3,7 +3,14 @@ quit-after-last-window-closed = true
 copy-on-select = true
 window-theme = system
 window-step-resize = true
+window-save-state = always
+mouse-hide-while-typing = true
 scrollback-limit = 100_000_000
+
+# CWD inheritance — pin all three; defaults have drifted between releases.
+window-inherit-working-directory = true
+tab-inherit-working-directory = true
+split-inherit-working-directory = true
 
 # Quick terminal — drop-down on Ctrl+`.
 keybind = global:ctrl+grave_accent=toggle_quick_terminal
