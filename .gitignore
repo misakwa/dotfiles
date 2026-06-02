@@ -1,2 +1,6 @@
 tmux/.tmux/plugins
 tmux/.tmux/sessions
+
+# Znap and plugins (cloned/managed by znap)
+zsh/.zsh/znap/
+zsh/.zsh/plugins/

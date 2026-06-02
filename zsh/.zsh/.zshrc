@@ -1,6 +1,8 @@
 [[ -r ~/.zsh/znap/znap.zsh ]] ||
     git clone --depth 1 -- https://github.com/marlonrichert/zsh-snap.git ~/.zsh/znap
 
+[[ -d ~/.zsh/plugins ]] || mkdir -p ~/.zsh/plugins
+zstyle ':znap:*' repos-dir ~/.zsh/plugins
 source ~/.zsh/znap/znap.zsh
 
 bindkey -e
@@ -25,8 +27,6 @@ ZSH_HIGHLIGHT_HIGHLIGHTERS=( main brackets )
 # znap source zsh-users/zsh-syntax-highlighting
 
 # znap source johanhaleby/kubetail
-
-eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"
 
 for file in ~/.{exports,aliases,functions,extra}; do
     [ -r "$file" ] && source "$file"

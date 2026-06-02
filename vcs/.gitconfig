@@ -231,6 +231,10 @@ protocol = ssh
     gpgsign = false
 [rebase]
 	autoStash = false
+
+[include]
+    # Machine-local config (maintenance repos, credentials, etc.)
+    path = ~/.gitconfig.local
 ; [difftool]
 ;   prompt = true
 ; [diff]
@@ -255,13 +259,3 @@ protocol = ssh
 ; 	stash = normal dim
 ; 	grafted = normal bold
 ; 	HEAD = normal italic
-[maintenance]
-	repo = /home/michael/.dotfiles/zsh/.zsh/znap
-	repo = /home/michael/.dotfiles/zsh/.zsh/johanhaleby/kubetail
-	repo = /home/michael/.dotfiles/zsh/.zsh/marlonrichert/zsh-autocomplete
-	repo = /home/michael/.dotfiles/zsh/.zsh/marlonrichert/zsh-edit
-	repo = /home/michael/.dotfiles/zsh/.zsh/ohmyzsh/ohmyzsh
-	repo = /home/michael/.dotfiles/zsh/.zsh/sindresorhus/pure
-	repo = /home/michael/.dotfiles/zsh/.zsh/zsh-users/zsh-autosuggestions
-	repo = /home/michael/.dotfiles/zsh/.zsh/zsh-users/zsh-history-substring-search
-	repo = /home/michael/.dotfiles/zsh/.zsh/zsh-users/zsh-syntax-highlighting

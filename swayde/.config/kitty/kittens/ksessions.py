@@ -200,6 +200,50 @@ def on_close(boss, window, data):
         print(f"ksessions on_close: {e}", file=sys.stderr)
 
 
+# After set_os_window_title runs once, kitty stops auto-syncing the OS title
+# from the active tab — so every hook below must re-apply to keep it live.
+
+def _apply_os_title(boss, os_window_id):
+    try:
+        ls = _kitty_ls()
+    except subprocess.CalledProcessError:
+        return
+    ow = next((x for x in ls if x.get("id") == os_window_id), None)
+    if not ow:
+        return
+    name = _current_ksession_name(ow)
+    active_title = None
+    for tab in ow.get("tabs", []):
+        if not tab.get("is_focused"):
+            continue
+        for w in tab.get("windows", []):
+            if w.get("is_focused"):
+                active_title = w.get("title")
+                break
+        break
+    if active_title is None:
+        return
+    title = f"[{name}] {active_title}" if name else active_title
+    try:
+        boss.set_os_window_title(os_window_id, title)
+    except Exception as e:
+        print(f"ksessions set_os_window_title: {e}", file=sys.stderr)
+
+
+def on_title_change(boss, window, data):
+    _apply_os_title(boss, window.os_window_id)
+
+
+def on_focus_change(boss, window, data):
+    if data.get("focused"):
+        _apply_os_title(boss, window.os_window_id)
+
+
+def on_set_user_var(boss, window, data):
+    if data.get("name") == "KSESSION_NAME":
+        _apply_os_title(boss, window.os_window_id)
+
+
 # -----------------------------------------------------------------------------
 # Subcommands
 # -----------------------------------------------------------------------------
