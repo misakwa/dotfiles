@@ -1,5 +1,6 @@
 tmux/.tmux/plugins
 tmux/.tmux/sessions
+tmux/.tmux/notify
 
 # Znap and plugins (cloned/managed by znap)
 zsh/.zsh/znap/
