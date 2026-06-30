@@ -7,6 +7,14 @@
   when feasible.
 - **Always run the project's formatter and build/test** before considering
   work done. Don't rely on the user to catch lint/build failures.
+- **Comments**: default to none, and when one is necessary keep it pithy —
+  one short line that captures a non-obvious WHY (hidden constraint,
+  counter-intuitive value, workaround). Don't re-state values written
+  right below, don't label a block's purpose ("prod-only ...", "added for
+  the X flow"), don't narrate helper / merge / framework internals, don't
+  reference the current PR or task — those belong in the PR description,
+  not in the file. If you're tempted to write a paragraph, write it in
+  the PR description instead.
 
 ## Git workflow
 - **Commit logical units together.** Bundle changes that belong to the same
@@ -14,6 +22,11 @@
   multiple commits, and don't combine unrelated changes.
 - **Branch prefix**: always create new branches under `misakwa/` — e.g.
   `misakwa/fix-auth-redirect`, `misakwa/add-cdc-projection`.
+- **Never post comments on my behalf.** Do not post or reply to PR/issue
+  comments, review threads, or bot threads on GitHub (or any other platform)
+  as me. When a comment warrants a response, draft it and show it to me — I
+  decide whether and what to post. (Editing the PR title/body/labels when
+  finalizing a PR is fine; conversational comments are not.)
 
 ## Research: check native first
 Before recommending or building a custom / third-party solution, exhaustively
