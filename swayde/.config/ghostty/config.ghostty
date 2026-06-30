@@ -1,11 +1,21 @@
 # General behavior
+# theme = dark:Catppuccin Frappe, light:Catppuccin Latte
+# theme = dark:TokyoNight Storm, light:TokyoNight Day
+# theme = TokyoNight Storm
+theme = Gruvbox Dark Hard
+
 quit-after-last-window-closed = true
 copy-on-select = true
 window-theme = system
 window-step-resize = true
 window-save-state = always
+resize-overlay = never
 mouse-hide-while-typing = true
-scrollback-limit = 100_000_000
+# scrollback-limit = 100_000_000
+scrollback-limit = 100_000
+# alpha-blending = native
+# font-style = SemiBold
+# minimum-contrast = 1.1
 
 # CWD inheritance — pin all three; defaults have drifted between releases.
 window-inherit-working-directory = true
@@ -19,8 +29,8 @@ keybind = global:ctrl+grave_accent=toggle_quick_terminal
 # Sends ^A to the shell when leader+a or double-tap leader is pressed
 # (preserves shell beginning-of-line). Escape aborts the table cleanly.
 keybind = ctrl+a=activate_key_table_once:leader
-keybind = leader/a=text:\\x01
-keybind = leader/ctrl+a=text:\\x01
+keybind = leader/a=text:\x01
+keybind = leader/ctrl+a=text:\x01
 keybind = leader/escape=deactivate_key_table
 
 # Splits — navigate
@@ -42,10 +52,10 @@ keybind = leader/shift+l=resize_split:right,30
 
 # Splits — sticky resize sub-table. Tap hjkl freely; = equalizes; escape exits.
 keybind = leader/ctrl+r=activate_key_table:resize
-keybind = resize/h=resize_split:left,10
-keybind = resize/j=resize_split:down,10
-keybind = resize/k=resize_split:up,10
-keybind = resize/l=resize_split:right,10
+keybind = resize/h=resize_split:left,25
+keybind = resize/j=resize_split:down,25
+keybind = resize/k=resize_split:up,25
+keybind = resize/l=resize_split:right,25
 keybind = resize/==equalize_splits
 keybind = resize/escape=deactivate_key_table
 keybind = resize/enter=deactivate_key_table
