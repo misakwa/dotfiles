@@ -1,0 +1,3 @@
+# Layout ratio: parent / current / preview. Preview kept the largest pane.
+[mgr]
+ratio = [1, 2, 5]

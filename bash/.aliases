@@ -6,6 +6,9 @@ alias .....="cd ../../../.."
 alias ~="cd ~" # `cd` is probably faster to type though
 alias -- -="cd -"
 
+# yazi with cd-on-quit (wrapper fn lives in .functions)
+alias yazi="yazi_cd"
+
 # Shortcuts
 alias d="cd ~/Public/Dropbox"
 alias dl="cd ~/Downloads"

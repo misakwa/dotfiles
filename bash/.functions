@@ -251,3 +251,14 @@ function dockercleanup() {
     echo 'Removing images:' >&2
     docker images | tail -n +2 | awk '$1 == "<none>" {print $3}' | xargs docker rmi
 }
+
+# Open yazi, then cd to wherever it was when you quit (cd-on-quit)
+function yazi_cd() {
+    local tmp cwd
+    tmp="$(mktemp -t "yazi-cwd.XXXXXX")"
+    command yazi "$@" --cwd-file="$tmp"  # `command` so the `yazi` self-alias doesn't recurse
+    if cwd="$(cat -- "$tmp")" && [ -n "$cwd" ] && [ "$cwd" != "$PWD" ]; then
+        cd -- "$cwd"
+    fi
+    rm -f -- "$tmp"
+}
