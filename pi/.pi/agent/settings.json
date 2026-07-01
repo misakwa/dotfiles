@@ -1,0 +1,17 @@
+{
+  "thinkingLevel": "medium",
+  "defaultProjectTrust": "ask",
+  "steeringMode": "queue",
+  "packages": [
+    "git:github.com/obra/superpowers",
+    "npm:pi-web-access",
+    "npm:pi-lean-ctx",
+    "npm:pi-caveman",
+    "npm:pi-knowledge"
+  ],
+  "lastChangelogVersion": "0.80.3",
+  "theme": "dark",
+  "defaultProvider": "llama-swap",
+  "defaultModel": "qwythos-9b",
+  "defaultThinkingLevel": "medium"
+}

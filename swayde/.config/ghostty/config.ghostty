@@ -2,7 +2,7 @@
 # theme = dark:Catppuccin Frappe, light:Catppuccin Latte
 # theme = dark:TokyoNight Storm, light:TokyoNight Day
 # theme = TokyoNight Storm
-theme = Gruvbox Dark Hard
+theme = dark:Gruvbox Dark,light:Gruvbox Light
 
 quit-after-last-window-closed = true
 copy-on-select = true
@@ -59,6 +59,16 @@ keybind = resize/l=resize_split:right,25
 keybind = resize/==equalize_splits
 keybind = resize/escape=deactivate_key_table
 keybind = resize/enter=deactivate_key_table
+
+# Leave resize mode when navigating to another split.
+keybind = resize/ctrl+a>h=deactivate_key_table
+keybind = chain=goto_split:left
+keybind = resize/ctrl+a>j=deactivate_key_table
+keybind = chain=goto_split:down
+keybind = resize/ctrl+a>k=deactivate_key_table
+keybind = chain=goto_split:up
+keybind = resize/ctrl+a>l=deactivate_key_table
+keybind = chain=goto_split:right
 
 # Splits — zoom / equalize / close
 keybind = leader/z=toggle_split_zoom

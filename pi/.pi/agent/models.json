@@ -1,0 +1,16 @@
+{
+  "providers": {
+    "llama-swap": {
+      "baseUrl": "http://localhost:8080/v1",
+      "api": "openai-completions",
+      "apiKey": "local",
+      "models": [
+        { "id": "glm-4.7-flash", "name": "GLM-4.7 Flash",        "input": ["text"],          "contextWindow": 202752, "maxTokens": 32768, "reasoning": true, "cost": { "input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0 } },
+        { "id": "qwen3.6-27b",   "name": "Qwen3.6 27B (vision)",  "input": ["text", "image"], "contextWindow": 262144, "maxTokens": 65536, "reasoning": true, "cost": { "input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0 } },
+        { "id": "gpt-oss-20b",   "name": "gpt-oss 20B",           "input": ["text"],          "contextWindow": 131072, "maxTokens": 16384, "reasoning": true, "cost": { "input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0 } },
+        { "id": "qwythos-9b",    "name": "Qwythos 9B (vision)",   "input": ["text", "image"], "contextWindow": 262144, "maxTokens": 65536, "reasoning": true, "cost": { "input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0 } },
+        { "id": "smollm3-3b",    "name": "SmolLM3 3B",            "input": ["text"],          "contextWindow": 65536,  "maxTokens": 16384, "reasoning": true, "cost": { "input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0 } }
+      ]
+    }
+  }
+}

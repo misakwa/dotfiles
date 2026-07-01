@@ -1,0 +1,15 @@
+# codex --profile local  → overlays config.toml. Local models via llama-swap (offline).
+# Swap model with -m, e.g.  codex --profile local -m glm-4.7-flash
+model = "gpt-oss-20b"
+model_provider = "llamaswap"
+
+[model_providers.llamaswap]
+name = "llama-swap"
+base_url = "http://127.0.0.1:8080/v1"
+wire_api = "responses"
+
+[projects."/Users/michael/Projects/llms"]
+trust_level = "trusted"
+
+[tui.model_availability_nux]
+"gpt-5.5" = 3

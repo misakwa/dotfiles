@@ -1,0 +1,19 @@
+sandbox_mode = "read-only"
+approval_policy = "on-request"
+
+model_reasoning_effort = "high"
+personality = "none"
+
+web_search = "cached"
+
+[features]
+apps = true
+shell_snapshot = true
+undo = true
+memories = true
+
+[projects."/Users/michael/.dotfiles"]
+trust_level = "trusted"
+
+[tui.model_availability_nux]
+"gpt-5.5" = 1

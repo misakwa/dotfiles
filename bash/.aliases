@@ -154,3 +154,8 @@ alias hax="growlnotify -a 'Activity Monitor' 'System error' -m 'WTF R U DOIN'"
 
 # Tmux
 alias tmux="tmux -2"
+
+# Local Claude Code via llama-swap (offline); plain `claude` stays cloud. The chat models
+# carry claude-* aliases so gateway discovery lists all five in /model. Starts on qwythos;
+# switch with /model.
+alias claude-local='ANTHROPIC_BASE_URL=http://127.0.0.1:8080 ANTHROPIC_AUTH_TOKEN=local ANTHROPIC_MODEL=claude-qwythos-9b CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY=1 DISABLE_AUTOUPDATER=1 claude'

@@ -1,0 +1,14 @@
+{
+  "toolPrefix": "mcp",
+  "idleTimeout": 300,
+  "mcpServers": {
+    "context7": {
+      "type": "http",
+      "url": "https://mcp.context7.com/mcp",
+      "lifecycle": "lazy",
+      "idleTimeout": 300,
+      "directTools": ["resolve-library-id", "query-docs"],
+      "env": { "CONTEXT7_API_KEY": "${CONTEXT7_API_KEY}" }
+    }
+  }
+}

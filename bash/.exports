@@ -37,3 +37,8 @@ export PATH="${KREW_ROOT:-$HOME/.krew}/bin:$PATH"
 
 export ASDF_DATA_DIR="$HOME/.asdf"
 export PATH="${ASDF_DATA_DIR:-$HOME/.asdf}/shims:$PATH"
+
+export PATH="$HOME/.cache/.bun/bin:$PATH"
+
+# Disable Claude Code telemetry globally (all sessions, cloud + local)
+export CLAUDE_CODE_ENABLE_TELEMETRY=0
