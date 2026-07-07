@@ -3,7 +3,7 @@
 # $HOME-relative so the LaunchAgent carries no hardcoded home directory, and
 # gives launchd / Login Items a descriptive name instead of the bare "proxy".
 : "${HOME:?HOME is not set}"
-PATH="/opt/homebrew/bin:/usr/local/bin:$HOME/.local/bin:$PATH"; export PATH
+PATH="/opt/homebrew/bin:/usr/local/bin:/home/linuxbrew/.linuxbrew/bin:$HOME/.local/bin:$PATH"; export PATH
 cache="$HOME/.cache/git-pkgs"
 mkdir -p "$cache/artifacts"
 export PROXY_LISTEN=":8377"

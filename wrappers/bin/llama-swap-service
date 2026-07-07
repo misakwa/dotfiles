@@ -2,7 +2,7 @@
 # Named launcher for llama-swap under launchd: keeps paths $HOME-relative and
 # avoids shadowing the real `llama-swap` binary on PATH.
 : "${HOME:?HOME is not set}"
-PATH="/opt/homebrew/bin:/usr/local/bin:$HOME/.local/bin:$PATH"; export PATH
+PATH="/opt/homebrew/bin:/usr/local/bin:/home/linuxbrew/.linuxbrew/bin:$HOME/.local/bin:$PATH"; export PATH
 logs="$HOME/.cache/llama-swap"
 mkdir -p "$logs"
 exec >>"$logs/out.log" 2>>"$logs/err.log"
