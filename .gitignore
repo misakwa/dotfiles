@@ -20,3 +20,6 @@ pi/.pi/agent/*
 !pi/.pi/agent/mcp.json
 !pi/.pi/agent/settings.json
 !pi/.pi/agent/AGENTS.md
+
+# launchd plists are rendered from *.plist.in (see Makefile) — ignore the output
+launchd/Library/LaunchAgents/*.plist

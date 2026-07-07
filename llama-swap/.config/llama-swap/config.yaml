@@ -1,0 +1,63 @@
+# llama-swap.yaml — one endpoint for all local models, with a model UI + metrics.
+#   llama-swap --config ~/Projects/llms/etc/llama-swap.yaml --listen 127.0.0.1:8080
+#   UI http://127.0.0.1:8080/ui    metrics /metrics    running /running
+#
+# Routes by the request "model" field; serves OpenAI /v1/*, Anthropic /v1/messages,
+# and /v1/embeddings on one port. Sampling = each model card's recommended params,
+# kept on the llama-server cmd line so they're visible in the UI.
+# Prereq: run migrate-models.sh once so ~/models has the chat GGUFs (embedder's there).
+
+healthCheckTimeout: 300        # big models take a while to mmap on first load
+
+includeAliasesInList: true
+
+macros:
+  models_dir: "${env.HOME}/models"                                   # no hardcoded /Users path
+  srv: "/opt/homebrew/bin/llama-server --host 127.0.0.1 --port ${PORT}"
+
+models:
+  glm-4.7-flash:
+    cmd: "${srv} --jinja -m ${models_dir}/glm-4.7-flash-UD-Q4_K_XL.gguf -c 202752 --temp 0.7 --top-p 1.0 --min-p 0.01"
+    proxy: "http://127.0.0.1:${PORT}"
+    ttl: 300
+    aliases: ["claude-glm-4.7-flash"]
+  qwen3.6-27b:
+    cmd: "${srv} --jinja -m ${models_dir}/qwen3.6-27b-UD-Q4_K_XL.gguf --mmproj ${models_dir}/qwen3.6-27b.mmproj.gguf -c 262144 --temp 0.6 --top-p 0.95 --top-k 20 --min-p 0"
+    proxy: "http://127.0.0.1:${PORT}"
+    ttl: 300
+  gpt-oss-20b:
+    cmd: "${srv} --jinja -m ${models_dir}/gpt-oss-20b.gguf -c 131072 --temp 1.0 --top-p 1.0"
+    proxy: "http://127.0.0.1:${PORT}"
+    ttl: 300
+  qwythos-9b:
+    cmd: "${srv} --jinja -m ${models_dir}/qwythos-9b-Q8_0.gguf --mmproj ${models_dir}/qwythos-9b.mmproj.gguf -c 262144 --temp 0.6 --top-p 0.95 --top-k 20 --repeat-penalty 1.05"
+    proxy: "http://127.0.0.1:${PORT}"
+    ttl: 300
+  smollm3-3b:
+    cmd: "${srv} --jinja -m ${models_dir}/smollm3-3b.gguf -c 65536 --temp 0.6 --top-p 0.95"
+    proxy: "http://127.0.0.1:${PORT}"
+    ttl: 300
+  nomic-embed-text:
+    cmd: "${srv} --embeddings --pooling mean -m ${models_dir}/nomic-embed-text.gguf -c 8192"
+    proxy: "http://127.0.0.1:${PORT}"
+    ttl: 0          # never auto-unload — stays resident for AnythingLLM
+
+# Concurrency via the matrix DSL.  & = together, | = mutually exclusive, () = group;
+# any subset of a set is valid. evict_costs: higher = evicted last (embedder pinned).
+# Measured footprints @ full context (RSS, GB): glm 26.5 · qwen 33.2 · qwythos 17.2 ·
+# gpt-oss 15.9 · smollm 10.3 · embedder 0.3. Sets keep any co-loaded combo under ~50 GB
+# (Metal compute ceiling ~54 GB). glm & qwen stay mutually exclusive (~59 GB together).
+matrix:
+  vars:
+    glm:  glm-4.7-flash
+    qwen: qwen3.6-27b
+    oss:  gpt-oss-20b
+    qwy:  qwythos-9b
+    sm:   smollm3-3b
+    emb:  nomic-embed-text
+  evict_costs:
+    emb: 100
+  sets:
+    light: "(oss & qwy & sm) & emb"        # gpt-oss + qwythos + smollm all co-load + embedder (~44 GB)
+    glm:   "glm & (oss | qwy | sm) & emb"  # GLM + any one light model + embedder (<=44 GB)
+    qwen:  "qwen & (oss | sm) & emb"        # Qwen + gpt-oss or smollm + embedder (<=49 GB)

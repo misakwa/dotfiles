@@ -9,10 +9,28 @@ STOW       ?= stow
 GIT        ?= git
 TARGET     ?= $(HOME)
 DIR        := $(CURDIR)
-PACKAGES   ?= bash tmux vcs vim zsh swayde claude yazi codex pi registries
+
+ifeq ($(OS),Windows_NT)
+    detected_OS := Windows
+else
+    detected_OS := $(shell uname -s)
+endif
+
+PACKAGES   ?= bash tmux vcs vim zsh swayde claude yazi codex pi registries wrappers llama-swap
 STOW_FLAGS := --no-folding -v -t $(TARGET) -d $(DIR)
 
-.PHONY: help stow unstow restow check list .submodules
+# launchd agents live under ~/Library/LaunchAgents — macOS only.
+ifeq ($(detected_OS),Darwin)
+PACKAGES   += launchd
+endif
+
+# launchd plists are rendered from *.plist.in with @HOME@ expanded to $(TARGET),
+# so the tracked templates carry no hardcoded home directory. Rendered output is
+# gitignored and `stow` depends on `render`.
+PLIST_TMPL := $(wildcard launchd/Library/LaunchAgents/*.plist.in)
+PLIST_OUT  := $(PLIST_TMPL:.in=)
+
+.PHONY: help stow unstow restow check list .submodules render
 
 help: ## Show this help
 	@echo "Usage: make <target>"
@@ -21,6 +39,7 @@ help: ## Show this help
 	@echo "  unstow         Remove all package symlinks"
 	@echo "  restow         Alias for stow"
 	@echo "  check          Dry-run stow for all packages (no changes)"
+	@echo "  render         Render launchd plists from *.plist.in templates"
 	@echo "  stow-<pkg>     Symlink a single package"
 	@echo "  unstow-<pkg>   Remove a single package"
 	@echo "  check-<pkg>    Dry-run a single package"
@@ -31,7 +50,12 @@ help: ## Show this help
 .submodules:
 	$(GIT) submodule update --init --recursive
 
-stow: .submodules ## Symlink all packages
+render: $(PLIST_OUT) ## Render launchd plist templates (@HOME@ -> $HOME)
+
+launchd/Library/LaunchAgents/%.plist: launchd/Library/LaunchAgents/%.plist.in
+	sed 's|@HOME@|$(TARGET)|g' $< > $@
+
+stow: .submodules render ## Symlink all packages
 	$(STOW) -R $(STOW_FLAGS) $(PACKAGES)
 
 unstow: ## Remove all package symlinks
@@ -44,6 +68,9 @@ check: ## Dry-run: show what stow would do for all packages
 
 stow-%: .submodules ## Symlink a single package
 	$(STOW) -R $(STOW_FLAGS) $*
+
+# launchd plists must be rendered before they can be symlinked
+stow-launchd: render
 
 unstow-%: ## Remove a single package
 	$(STOW) -D $(STOW_FLAGS) $*
