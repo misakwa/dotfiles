@@ -19,9 +19,10 @@ endif
 PACKAGES   ?= bash tmux vcs vim zsh swayde claude yazi codex pi registries wrappers llama-swap
 STOW_FLAGS := --no-folding -v -t $(TARGET) -d $(DIR)
 
-# launchd agents live under ~/Library/LaunchAgents — macOS only.
+# launchd agents (~/Library/LaunchAgents) and Go's env file
+# (~/Library/Application Support/go/env) live at macOS-specific paths.
 ifeq ($(detected_OS),Darwin)
-PACKAGES   += launchd
+PACKAGES   += launchd go
 endif
 
 # launchd plists are rendered from *.plist.in with @HOME@ expanded to $(TARGET),
