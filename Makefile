@@ -6,12 +6,13 @@
 # out of this repo.
 
 STOW       ?= stow
+GIT        ?= git
 TARGET     ?= $(HOME)
 DIR        := $(CURDIR)
-PACKAGES   ?= bash tmux vcs vim zsh swayde claude yazi codex pi
+PACKAGES   ?= bash tmux vcs vim zsh swayde claude yazi codex pi registries
 STOW_FLAGS := --no-folding -v -t $(TARGET) -d $(DIR)
 
-.PHONY: help stow unstow restow check list
+.PHONY: help stow unstow restow check list .submodules
 
 help: ## Show this help
 	@echo "Usage: make <target>"
@@ -27,7 +28,10 @@ help: ## Show this help
 	@echo
 	@echo "Packages: $(PACKAGES)"
 
-stow: ## Symlink all packages
+.submodules:
+	$(GIT) submodule update --init --recursive
+
+stow: .submodules ## Symlink all packages
 	$(STOW) -R $(STOW_FLAGS) $(PACKAGES)
 
 unstow: ## Remove all package symlinks
@@ -38,7 +42,7 @@ restow: stow ## Alias for stow
 check: ## Dry-run: show what stow would do for all packages
 	$(STOW) -n -R $(STOW_FLAGS) $(PACKAGES)
 
-stow-%: ## Symlink a single package
+stow-%: .submodules ## Symlink a single package
 	$(STOW) -R $(STOW_FLAGS) $*
 
 unstow-%: ## Remove a single package
