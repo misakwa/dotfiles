@@ -1,0 +1,5 @@
+[source.crates-io]
+replace-with = "proxy"
+
+[source.proxy]
+registry = "sparse+http://localhost:8377/cargo/"
