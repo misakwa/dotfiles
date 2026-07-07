@@ -26,8 +26,21 @@ dnf install stow
 git clone https://github.com/misakwa/dotfiles.git ~/.dotfiles
 ```
 
-```
+```sh
 $ cd ~/.dotfiles
 $ git submodule update --init --recursive
-$ stow -R -t $HOME -v -d $HOME/.dotfiles bash tmux vcs vim zsh nvim swayde claude yazi codex pi
+$ make check   # dry-run: preview the symlinks
+$ make stow    # create the symlinks
+```
+
+Management is done through the `Makefile` (GNU Stow with `--no-folding`, so
+only individual files are symlinked and tools' runtime state stays out of the
+repo):
+
+```sh
+$ make stow           # symlink all packages
+$ make unstow         # remove all symlinks
+$ make check          # dry-run all packages
+$ make stow-<pkg>     # e.g. make stow-swayde
+$ make list           # show configured packages
 ```

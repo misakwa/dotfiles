@@ -1,0 +1,6 @@
+# Runtime / plugin state that lives inside this package on disk but must NOT
+# be symlinked out under --no-folding. The real ~/.tmux owns these; TPM and
+# tmux-resurrect populate them. (git ignores them too.)
+plugins
+sessions
+notify

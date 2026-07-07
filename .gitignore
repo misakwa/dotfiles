@@ -2,6 +2,10 @@ tmux/.tmux/plugins
 tmux/.tmux/sessions
 tmux/.tmux/notify
 
+# Python bytecode (e.g. kitty kitten caches)
+__pycache__/
+*.pyc
+
 # Znap and plugins (cloned/managed by znap)
 zsh/.zsh/znap/
 zsh/.zsh/plugins/
