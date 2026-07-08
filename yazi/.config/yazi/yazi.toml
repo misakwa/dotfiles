@@ -1,3 +1,8 @@
 # Layout ratio: parent / current / preview. Preview kept the largest pane.
 [mgr]
 ratio = [1, 2, 5]
+
+[[plugin.prepend_fetchers]]
+url = "*"
+run = "git"
+group = "git"
