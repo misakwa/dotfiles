@@ -1,0 +1,28 @@
+{
+  "$schema": "https://raw.githubusercontent.com/manaflow-ai/cmux/main/web/data/cmux.schema.json",
+  "schemaVersion": 1,
+  "shortcuts": {
+    "bindings": {
+      "focusLeft": ["ctrl+a", "h"],
+      "focusDown": ["ctrl+a", "j"],
+      "focusUp": ["ctrl+a", "k"],
+      "focusRight": ["ctrl+a", "l"],
+
+      "splitRight": ["ctrl+a", "backslash"],
+      "splitDown": ["ctrl+a", "-"],
+      "toggleSplitZoom": ["ctrl+a", "z"],
+      "equalizeSplits": ["ctrl+a", "="],
+
+      "newSurface": ["ctrl+a", "c"],
+      "nextSurface": ["ctrl+a", "n"],
+      "prevSurface": ["ctrl+a", "p"],
+      "selectSurfaceByNumber": ["ctrl+a", "1"],
+      "closeTab": ["ctrl+a", "x"],
+      "renameTab": ["ctrl+a", ","],
+
+      "goToWorkspace": ["ctrl+a", "w"],
+      "nextSidebarTab": ["ctrl+a", "]"],
+      "prevSidebarTab": ["ctrl+a", "["]
+    }
+  }
+}

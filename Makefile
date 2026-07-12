@@ -24,7 +24,7 @@ STOW_FLAGS := --no-folding -v -t $(TARGET) -d $(DIR)
 # Go's env file (~/.config/go/env) on Linux. SERVICE_MGR selects the loader
 # that `enable` dispatches to.
 ifeq ($(detected_OS),Darwin)
-PACKAGES    += launchd go
+PACKAGES    += launchd go cmux
 SERVICE_MGR := launchd
 endif
 ifeq ($(detected_OS),Linux)
