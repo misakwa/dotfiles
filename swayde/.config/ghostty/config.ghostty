@@ -12,7 +12,7 @@ window-save-state = always
 resize-overlay = never
 mouse-hide-while-typing = true
 # Don't forward clicks to TUI apps. Links still open with cmd/ctrl+click.
-mouse-reporting = false
+# mouse-reporting = false
 # scrollback-limit = 100_000_000
 scrollback-limit = 100_000
 # alpha-blending = native
