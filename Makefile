@@ -16,7 +16,7 @@ else
     detected_OS := $(shell uname -s)
 endif
 
-PACKAGES   ?= bash tmux vcs vim zsh swayde claude yazi codex pi registries wrappers llama-swap
+PACKAGES   ?= bash tmux vcs vim zsh swayde claude yazi codex pi registries wrappers llama-swap agents
 STOW_FLAGS := --no-folding -v -t $(TARGET) -d $(DIR)
 
 # Per-OS packages install at OS-specific paths: launchd agents plus Go's env

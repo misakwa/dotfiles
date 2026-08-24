@@ -23,5 +23,18 @@
   "env": {
     "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "1",
     "CLAUDE_CODE_DISABLE_MOUSE_CLICKS": "1"
+  },
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 ~/.agents/hooks/kitty-review.py",
+            "timeout": 30
+          }
+        ]
+      }
+    ]
   }
 }
