@@ -6,10 +6,6 @@ tmux/.tmux/notify
 __pycache__/
 *.pyc
 
-# Znap and plugins (cloned/managed by znap)
-zsh/.zsh/znap/
-zsh/.zsh/plugins/
-
 # Pi coding agent: track only the config files; ignore all runtime state
 # (sessions, caches, trust, installed extension packages) that folding
 # places inside this repo.

@@ -1,4 +1,0 @@
-# znap-managed plugin trees. Not symlinked out under --no-folding; the real
-# ~/.zsh owns these and znap populates them. (git ignores them too.)
-znap
-plugins
