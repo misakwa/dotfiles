@@ -1,0 +1,42 @@
+#!/usr/bin/env bash
+# stow-prune: report what deleting files from a package leaves behind - broken
+# symlinks in the repo, and services whose file is gone. Dry run unless --force.
+set -euo pipefail
+
+DIR="$HOME/.dotfiles"
+FORCE=""
+[ "${1:-}" = "--force" ] && FORCE=1
+
+echo "== broken symlinks =="
+# chkstow only reports, so do the removing here.
+while IFS= read -r link; do
+    if [ -n "$FORCE" ]; then
+        rm -f "$link"
+        echo "removed $link"
+    else
+        echo "broken  $link"
+    fi
+done < <(chkstow -t "$DIR" --badlinks 2>/dev/null | sed -n 's/^Bogus link: //p')
+
+echo "== stale launchd plists =="
+for plist in "$DIR"/launchd/Library/LaunchAgents/*.plist; do
+    [ -e "$plist" ] && [ ! -e "$plist.in" ] || continue
+    label="$(basename "$plist" .plist)"
+    if [ -n "$FORCE" ]; then
+        rm -f "$plist" "$HOME/Library/LaunchAgents/$label.plist"
+        echo "removed $label"
+    else
+        echo "stale   $label (rendered, but its .plist.in is gone)"
+    fi
+    # Deleting a plist does not unload the job it defined.
+    if launchctl list 2>/dev/null | awk -v l="$label" '$3 == l { hit = 1 } END { exit !hit }'; then
+        echo "        still loaded: launchctl bootout gui/$(id -u)/$label"
+    fi
+done
+
+if command -v systemctl >/dev/null 2>&1; then
+    echo "== systemd units with no file =="
+    systemctl --user list-units --all --state=not-found --no-legend
+fi
+
+[ -n "$FORCE" ] || echo "(dry run - re-run with --force to delete)"

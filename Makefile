@@ -42,7 +42,7 @@ PLIST_OUT  := $(PLIST_TMPL:.in=)
 LAUNCH_AGENTS := com.misakwa.llama-swap
 SYSTEMD_UNITS := com.misakwa.llama-swap.service
 
-.PHONY: help stow unstow restow check list .submodules render enable enable-launchd enable-systemd
+.PHONY: help stow unstow restow check prune list .submodules render enable enable-launchd enable-systemd
 
 help: ## Show this help
 	@echo "Usage: make <target>"
@@ -51,6 +51,8 @@ help: ## Show this help
 	@echo "  unstow         Remove all package symlinks"
 	@echo "  restow         Alias for stow"
 	@echo "  check          Dry-run stow for all packages (no changes)"
+	@echo "  prune          Report symlinks stranded by deleted files (no changes)"
+	@echo "  prune FORCE=1  Delete what prune reported"
 	@echo "  render         Render launchd plists from *.plist.in templates"
 	@echo "  enable         Load/enable the services for this OS (launchd/systemd)"
 	@echo "  stow-<pkg>     Symlink a single package"
@@ -104,6 +106,9 @@ enable-systemd: stow-systemd ## (Linux) Enable + start the systemd user units
 	loginctl enable-linger $$(id -un)
 	systemctl --user daemon-reload
 	systemctl --user enable --now $(SYSTEMD_UNITS)
+
+prune: ## Report symlinks stranded by deleted package files (FORCE=1 to delete)
+	@scripts/stow-prune $(if $(FORCE),--force)
 
 unstow-%: ## Remove a single package
 	$(STOW) -D $(STOW_FLAGS) $*

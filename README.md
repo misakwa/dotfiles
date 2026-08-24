@@ -43,7 +43,21 @@ $ make unstow         # remove all symlinks
 $ make check          # dry-run all packages
 $ make stow-<pkg>     # e.g. make stow-swayde
 $ make list           # show configured packages
+$ make prune          # report what deleted files left behind
+$ make prune FORCE=1  # delete what prune reported
 ```
+
+`make prune` wraps `scripts/stow-prune`, which reports two kinds of leftovers:
+symlinks inside the repo whose target is gone (an `agents/` skill link, say,
+after the skill was renamed in `skills/`), and launchd plists still rendered
+from a `*.plist.in` that no longer exists. It reports by default and deletes
+only with `FORCE=1`, and it flags a launchd job still loaded after its plist
+was removed, since deleting the file does not unload the service.
+
+Detection of the first kind is `chkstow -t "$HOME/.dotfiles" --badlinks`, which
+ships with stow. Point it at the repo, not at `$HOME`: it walks whatever tree
+you give it, and against `$HOME` it reports every broken symlink on the system.
+It only reports — removal is the script's half.
 
 ## Repository structure
 
