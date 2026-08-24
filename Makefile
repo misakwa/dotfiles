@@ -16,19 +16,18 @@ else
     detected_OS := $(shell uname -s)
 endif
 
-PACKAGES   ?= bash tmux vcs vim zsh swayde claude yazi codex pi registries wrappers llama-swap agents
+PACKAGES   ?= bash tmux vcs vim zsh swayde claude yazi codex pi docker wrappers llama-swap agents
 STOW_FLAGS := --no-folding -v -t $(TARGET) -d $(DIR)
 
-# Per-OS packages install at OS-specific paths: launchd agents plus Go's env
-# file (~/Library/Application Support/go/env) on macOS; systemd user units plus
-# Go's env file (~/.config/go/env) on Linux. SERVICE_MGR selects the loader
-# that `enable` dispatches to.
+# Per-OS packages install at OS-specific paths: launchd agents and cmux on
+# macOS; systemd user units on Linux. SERVICE_MGR selects the loader that
+# `enable` dispatches to.
 ifeq ($(detected_OS),Darwin)
-PACKAGES    += launchd go cmux
+PACKAGES    += launchd cmux
 SERVICE_MGR := launchd
 endif
 ifeq ($(detected_OS),Linux)
-PACKAGES    += systemd go-linux
+PACKAGES    += systemd
 SERVICE_MGR := systemd
 endif
 
@@ -40,8 +39,8 @@ PLIST_OUT  := $(PLIST_TMPL:.in=)
 
 # Long-running services, loaded per OS by `enable`: launchd agents on macOS,
 # systemd user units on Linux. The wrappers in ~/bin are shared across both.
-LAUNCH_AGENTS := io.git-pkgs.package-registry-proxy com.misakwa.llama-swap
-SYSTEMD_UNITS := io.git-pkgs.package-registry-proxy.service com.misakwa.llama-swap.service
+LAUNCH_AGENTS := com.misakwa.llama-swap
+SYSTEMD_UNITS := com.misakwa.llama-swap.service
 
 .PHONY: help stow unstow restow check list .submodules render enable enable-launchd enable-systemd
 

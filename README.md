@@ -66,5 +66,5 @@ in place should be edited in the repo file (the source of truth), not through
 the `~` symlink.
 
 Packages are OS-gated in the `Makefile`: most are shared, while macOS-only
-(`launchd`, `go`, `cmux`) and Linux-only (`systemd`, `go-linux`) packages live
-behind `Darwin`/`Linux` guards and are stowed only on that platform.
+(`launchd`, `cmux`) and Linux-only (`systemd`) packages live behind
+`Darwin`/`Linux` guards and are stowed only on that platform.

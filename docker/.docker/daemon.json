@@ -5,6 +5,5 @@
       "enabled": true
     }
   },
-  "experimental": false,
-  "registry-mirrors": ["http://localhost:8377"]
+  "experimental": false
 }
