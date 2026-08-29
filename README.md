@@ -45,7 +45,21 @@ $ make stow-<pkg>     # e.g. make stow-swayde
 $ make list           # show configured packages
 $ make prune          # report what deleted files left behind
 $ make prune FORCE=1  # delete what prune reported
+$ make doom-install   # clone Doom into ~/.config/emacs, then install packages
+$ make doom-reclone   # replace that clone with a fresh one
 ```
+
+Doom Emacs is split between the two: `doom/` is the stow package for the private
+config (`~/.config/doom`), while the framework itself is cloned into
+`~/.config/emacs` by `make doom-install`, since it writes into its own worktree
+and can't be stowed. That target depends on `stow-doom` — the symlinks must
+exist first, or `doom install` writes its own template config over them. Package
+state lives in `$DOOMLOCALDIR` (`~/.local/share/doom-local`) rather than inside the
+clone, so upgrading is `make doom-reclone`: discard the clone, take a fresh one,
+keep the packages. `make enable` loads the Emacs daemon alongside the other
+services; `e` and `eg` open frames in it, and `er` restarts it and reattaches
+(`er -q` restarts without opening a frame). Occasional cleanup of orphaned
+packages is `doom sync --gc`.
 
 `make prune` wraps `scripts/stow-prune`, which reports two kinds of leftovers:
 symlinks inside the repo whose target is gone (an `agents/` skill link, say,

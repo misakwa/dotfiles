@@ -16,7 +16,7 @@ else
     detected_OS := $(shell uname -s)
 endif
 
-PACKAGES   ?= bash tmux vcs vim zsh swayde claude yazi codex pi docker wrappers llama-swap agents
+PACKAGES   ?= bash tmux vcs vim zsh swayde claude yazi codex pi docker wrappers llama-swap agents doom
 STOW_FLAGS := --no-folding -v -t $(TARGET) -d $(DIR)
 
 # Per-OS packages install at OS-specific paths: launchd agents and cmux on
@@ -39,10 +39,17 @@ PLIST_OUT  := $(PLIST_TMPL:.in=)
 
 # Long-running services, loaded per OS by `enable`: launchd agents on macOS,
 # systemd user units on Linux. The wrappers in ~/bin are shared across both.
-LAUNCH_AGENTS := com.misakwa.llama-swap
-SYSTEMD_UNITS := com.misakwa.llama-swap.service
+LAUNCH_AGENTS := com.misakwa.llama-swap com.misakwa.emacs
+SYSTEMD_UNITS := com.misakwa.llama-swap.service com.misakwa.emacs.service
 
-.PHONY: help stow unstow restow check prune list .submodules render enable enable-launchd enable-systemd
+# Doom Emacs: the framework is cloned, not stowed, since it writes into its own
+# worktree. Only ~/.config/doom is a package. DOOMLOCAL must match the
+# DOOMLOCALDIR exported by bash/.path and wrappers/bin/emacs-daemon-service.
+EMACSDIR   ?= $(TARGET)/.config/emacs
+DOOMLOCAL  ?= $(TARGET)/.local/share/doom-local
+DOOM_REPO  ?= https://github.com/doomemacs/core
+
+.PHONY: help stow unstow restow check prune list .submodules render enable enable-launchd enable-systemd doom-install doom-reclone
 
 help: ## Show this help
 	@echo "Usage: make <target>"
@@ -54,6 +61,8 @@ help: ## Show this help
 	@echo "  prune          Report symlinks stranded by deleted files (no changes)"
 	@echo "  prune FORCE=1  Delete what prune reported"
 	@echo "  render         Render launchd plists from *.plist.in templates"
+	@echo "  doom-install   Clone Doom into ~/.config/emacs and install packages"
+	@echo "  doom-reclone   Replace the Doom clone with a fresh one"
 	@echo "  enable         Load/enable the services for this OS (launchd/systemd)"
 	@echo "  stow-<pkg>     Symlink a single package"
 	@echo "  unstow-<pkg>   Remove a single package"
@@ -106,6 +115,25 @@ enable-systemd: stow-systemd ## (Linux) Enable + start the systemd user units
 	loginctl enable-linger $$(id -un)
 	systemctl --user daemon-reload
 	systemctl --user enable --now $(SYSTEMD_UNITS)
+
+# stow-doom first: `doom install` writes template init.el/config.el/packages.el
+# into $DOOMDIR if they're absent, and would land real files on top of the
+# package. --no-config keeps it off them even then.
+doom-install: stow-doom ## Clone Doom into ~/.config/emacs and install packages
+	@if [ -d "$(EMACSDIR)/.git" ]; then \
+	  echo "doom: $(EMACSDIR) already present, skipping clone"; \
+	else \
+	  $(GIT) clone --depth 1 --recurse-submodules --shallow-submodules \
+	    $(DOOM_REPO) "$(EMACSDIR)"; \
+	fi
+	@"$(EMACSDIR)/bin/doom" install --no-config --env
+
+# Upgrading is a discard-and-reclone, so the pinned modules submodule never has
+# to deepen in place (a fetch for a moved pin drags in its full history).
+doom-reclone: ## Replace ~/.config/emacs with a fresh clone
+	@case "$(DOOMLOCAL)" in "$(EMACSDIR)"*) echo "refusing: DOOMLOCAL is inside $(EMACSDIR)"; exit 1 ;; esac
+	rm -rf "$(EMACSDIR)"
+	@$(MAKE) doom-install
 
 prune: ## Report symlinks stranded by deleted package files (FORCE=1 to delete)
 	@scripts/stow-prune $(if $(FORCE),--force)

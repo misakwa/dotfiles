@@ -1,0 +1,10 @@
+[Unit]
+Description=Emacs daemon
+
+[Service]
+ExecStart=%h/bin/emacs-daemon-service
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=default.target

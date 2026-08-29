@@ -262,3 +262,20 @@ function yazi_cd() {
     fi
     rm -f -- "$tmp"
 }
+
+# Restart the Emacs daemon and reattach. The daemon re-execs in place, keeping
+# its PID so the supervisor never sees an exit; the wait is for Doom to finish
+# loading before a client connects. `er -q` restarts without opening a frame.
+function er() {
+    emacsclient -e '(let ((confirm-kill-processes nil) (kill-emacs-query-functions nil)) (save-buffers-kill-emacs t t))' >/dev/null || return 1
+    local waited=0;
+    until emacsclient -e t >/dev/null 2>&1; do
+        waited=$((waited + 1));
+        if [ "$waited" -gt 100 ]; then
+            echo "er: daemon did not come back" >&2;
+            return 1;
+        fi;
+        sleep 0.2;
+    done;
+    [ "$1" = "-q" ] || emacsclient -nw;
+}

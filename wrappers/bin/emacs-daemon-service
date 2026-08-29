@@ -1,0 +1,12 @@
+#!/bin/sh
+# Named launcher for the Emacs daemon: --fg-daemon so the supervisor owns the
+# process (a backgrounding daemon looks like an instant exit and thrashes).
+: "${HOME:?HOME is not set}"
+PATH="/opt/homebrew/bin:/usr/local/bin:/home/linuxbrew/.linuxbrew/bin:$HOME/.local/bin:$PATH"; export PATH
+# launchd/systemd inherit none of the shell environment, so this has to be set
+# here too or the daemon and the `doom` CLI use different package trees.
+DOOMLOCALDIR="$HOME/.local/share/doom-local/"; export DOOMLOCALDIR
+logs="$HOME/.cache/emacs"
+mkdir -p "$logs"
+exec >>"$logs/out.log" 2>>"$logs/err.log"
+exec emacs --fg-daemon

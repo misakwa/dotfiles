@@ -19,3 +19,6 @@ pi/.pi/agent/*
 
 # launchd plists are rendered from *.plist.in (see Makefile) — ignore the output
 launchd/Library/LaunchAgents/*.plist
+
+# Emacs Customize writes $DOOMDIR/custom.el; that's machine state, not config
+doom/.config/doom/custom.el
