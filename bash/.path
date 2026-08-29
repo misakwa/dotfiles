@@ -1,0 +1,10 @@
+# Sourced before ~/.exports and before znap loads plugins, for the PATH entries
+# that later files and plugins resolve against at load time.
+
+for brew in /opt/homebrew/bin/brew /home/linuxbrew/.linuxbrew/bin/brew /usr/local/bin/brew; do
+    [ -x "$brew" ] && eval "$("$brew" shellenv)" && break
+done
+unset brew
+
+export ASDF_DATA_DIR="${ASDF_DATA_DIR:-$HOME/.asdf}"
+export PATH="$ASDF_DATA_DIR/shims:$HOME/go/bin:$PATH"
