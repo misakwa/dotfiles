@@ -1,28 +1,27 @@
 {
   "$schema": "https://json.schemastore.org/claude-code-settings.json",
-  "includeCoAuthoredBy": false,
-  "enabledPlugins": {
-    "frontend-design@claude-plugins-official": true,
-    "feature-dev@claude-plugins-official": true,
-    "code-simplifier@claude-plugins-official": true,
-    "gopls-lsp@claude-plugins-official": true,
-    "rust-analyzer-lsp@claude-plugins-official": true
-  },
-  "extraKnownMarketplaces": {},
-  "alwaysThinkingEnabled": true,
-  "effortLevel": "high",
-  "showClearContextOnPlanAccept": true,
-  "tui": "fullscreen",
-  "skipDangerousModePermissionPrompt": true,
-  "verbose": true,
-  "skipAutoPermissionPrompt": true,
-  "enableCodeSimplifier": true,
-  "telemetry": {
-    "enabled": false
-  },
   "env": {
     "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "1",
-    "CLAUDE_CODE_DISABLE_MOUSE_CLICKS": "1"
+    "CLAUDE_CODE_DISABLE_MOUSE_CLICKS": "1",
+    "CLAUDE_CODE_DISABLE_AUTO_MEMORY": "1"
+  },
+  "includeCoAuthoredBy": false,
+  "permissions": {
+    "defaultMode": "auto"
+  },
+  "skillOverrides": {
+    "omc-reference": "off",
+    "cmux-architecture": "off",
+    "cmux-backend": "off",
+    "cmux-billing": "off",
+    "cmux-debugging": "off",
+    "cmux-dev-workflow": "off",
+    "cmux-ghostty": "off",
+    "cmux-localization": "off",
+    "cmux-release": "off",
+    "cmux-shared-behavior": "off",
+    "cmux-socket-policy": "off",
+    "cmux-testing": "off"
   },
   "hooks": {
     "Stop": [
@@ -36,5 +35,21 @@
         ]
       }
     ]
+  },
+  "enabledPlugins": {},
+  "extraKnownMarketplaces": {},
+  "outputStyle": "asd-ste-100",
+  "alwaysThinkingEnabled": true,
+  "effortLevel": "high",
+  "showClearContextOnPlanAccept": true,
+  "tui": "fullscreen",
+  "showThinkingSummaries": true,
+  "skipDangerousModePermissionPrompt": true,
+  "verbose": true,
+  "skipAutoPermissionPrompt": true,
+  "verboseThinking": true,
+  "enableCodeSimplifier": true,
+  "telemetry": {
+    "enabled": false
   }
 }

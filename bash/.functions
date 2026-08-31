@@ -263,19 +263,46 @@ function yazi_cd() {
     rm -f -- "$tmp"
 }
 
-# Restart the Emacs daemon and reattach. The daemon re-execs in place, keeping
-# its PID so the supervisor never sees an exit; the wait is for Doom to finish
-# loading before a client connects. `er -q` restarts without opening a frame.
+# Emacs client frames in the supervised daemon. Each takes the paths to open,
+# defaulting to $PWD: a frame needs somewhere to land or it inherits whatever
+# workspace the daemon was last in, and frames 2..n each get their own.
+function e() {
+    emacsclient -nw -a '' "${@:-.}";
+}
+
+function eg() {
+    emacsclient -nc -a '' "${@:-.}";
+}
+
+# Restart the daemon and reattach; the supervisor respawns it, so expect a few
+# seconds. Save and exit are separate calls on purpose: `save-buffers-kill-emacs`
+# consults connected clients and can block forever on a daemon with no frame to
+# prompt in, wedging it. `-q` restarts without a frame; other args go to `e`.
 function er() {
-    emacsclient -e '(let ((confirm-kill-processes nil) (kill-emacs-query-functions nil)) (save-buffers-kill-emacs t t))' >/dev/null || return 1
-    local waited=0;
+    local attach=1 waited=0;
+    if [ "$1" = "-q" ]; then
+        attach=0;
+        shift;
+    fi;
+    emacsclient -e '(progn (save-some-buffers t) (kill-emacs))' >/dev/null || return 1;
     until emacsclient -e t >/dev/null 2>&1; do
         waited=$((waited + 1));
-        if [ "$waited" -gt 100 ]; then
+        if [ "$waited" -gt 200 ]; then
             echo "er: daemon did not come back" >&2;
             return 1;
         fi;
         sleep 0.2;
     done;
-    [ "$1" = "-q" ] || emacsclient -nw;
+    if [ "$attach" -eq 1 ]; then
+        e "$@";
+    fi;
+}
+
+# Pick up config changes; `ee` after installing new binaries. Args go to `er`.
+function es() {
+    doom sync && er "$@";
+}
+
+function ee() {
+    doom sync --env && er "$@";
 }

@@ -57,9 +57,10 @@ exist first, or `doom install` writes its own template config over them. Package
 state lives in `$DOOMLOCALDIR` (`~/.local/share/doom-local`) rather than inside the
 clone, so upgrading is `make doom-reclone`: discard the clone, take a fresh one,
 keep the packages. `make enable` loads the Emacs daemon alongside the other
-services; `e` and `eg` open frames in it, and `er` restarts it and reattaches
-(`er -q` restarts without opening a frame). Occasional cleanup of orphaned
-packages is `doom sync --gc`.
+services; `e` and `eg` open a terminal or GUI frame on the paths given, defaulting
+to `$PWD` so the frame lands in the project you're standing in. `er` restarts the
+daemon and reattaches (`er -q` for no frame), `es` and `ee` sync first. Occasional
+cleanup of orphaned packages is `doom sync --gc`.
 
 `make prune` wraps `scripts/stow-prune`, which reports two kinds of leftovers:
 symlinks inside the repo whose target is gone (an `agents/` skill link, say,

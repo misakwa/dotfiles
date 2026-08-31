@@ -89,6 +89,10 @@
 
 (add-hook 'prog-mode-hook #'display-fill-column-indicator-mode)
 
+;; Ghostty is on neither of Emacs 31's `xterm--auto-xt-mouse-allowed-{names,types}'
+;; allowlists, so without this no click reaches Emacs in a terminal frame.
+(add-hook 'tty-setup-hook #'xterm-mouse-mode)
+
 (setq org-hide-emphasis-markers t)
 (after! markdown-mode
   (setq markdown-hide-markup t))
