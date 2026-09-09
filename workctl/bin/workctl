@@ -1,0 +1,103 @@
+#!/usr/bin/env -S uv run --script
+# /// script
+# requires-python = ">=3.11"
+# dependencies = []
+# ///
+"""Dispatch a workctl subcommand to its own script.
+
+`workctl <name> [args...]` runs `workctl_<name>` with the remaining arguments.
+Subcommands are looked up beside this file first, then on PATH, so a stowed
+symlink in ~/bin still finds its siblings in the dotfiles tree. With no
+arguments, workctl prints the board.
+"""
+import os
+import shutil
+import sys
+
+PREFIX = "workctl_"
+DEFAULT = "board"
+
+HOME = os.path.expanduser("~")
+
+
+def own_dir():
+    return os.path.dirname(os.path.realpath(__file__))
+
+
+def find(name):
+    """The executable for one subcommand, or None."""
+    local = os.path.join(own_dir(), PREFIX + name)
+    if os.access(local, os.X_OK):
+        return local
+    return shutil.which(PREFIX + name)
+
+
+def available():
+    names = set()
+    for directory in [own_dir()] + os.environ.get("PATH", "").split(os.pathsep):
+        try:
+            entries = os.listdir(directory or ".")
+        except OSError:
+            continue
+        for entry in entries:
+            if entry.startswith(PREFIX):
+                path = os.path.join(directory or ".", entry)
+                if os.access(path, os.X_OK):
+                    names.add(entry[len(PREFIX):])
+    return sorted(names)
+
+
+def describe(name):
+    """The first line of a subcommand's docstring, for the help listing."""
+    path = find(name)
+    if not path:
+        return ""
+    try:
+        with open(path, encoding="utf-8", errors="replace") as handle:
+            body = handle.read(4096)
+    except OSError:
+        return ""
+    for quote in ('"""', "'''"):
+        start = body.find(quote)
+        if start != -1:
+            return body[start + 3:].splitlines()[0].strip()
+    return ""
+
+
+def usage(stream=sys.stdout):
+    print("usage: workctl [<command>] [args...]", file=stream)
+    print(f"\nWith no command, workctl runs {DEFAULT}.\n", file=stream)
+    names = available()
+    if not names:
+        print(f"No {PREFIX}* commands found beside {own_dir()} or on PATH.", file=stream)
+        return
+    width = max(len(n) for n in names)
+    print("commands:", file=stream)
+    for name in names:
+        print(f"  {name:<{width}}  {describe(name)}", file=stream)
+
+
+def main(argv):
+    if argv and argv[0] in ("-h", "--help", "help"):
+        usage()
+        return 0
+
+    # A leading flag, or nothing at all, means the default command. Only strip
+    # the first argument when it actually named the command.
+    implied = not argv or argv[0].startswith("-")
+    name = DEFAULT if implied else argv[0]
+    args = argv if implied else argv[1:]
+
+    path = find(name)
+    if not path:
+        print(f"workctl: no such command: {name}\n", file=sys.stderr)
+        usage(sys.stderr)
+        return 2
+
+    # Replace this process so the subcommand owns the terminal and the exit
+    # status, and so only one interpreter startup is added.
+    os.execv(path, [path] + args)
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

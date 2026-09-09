@@ -1,0 +1,130 @@
+#!/usr/bin/env -S uv run --script
+# /// script
+# requires-python = ">=3.11"
+# dependencies = []
+# ///
+"""Review one unit as a single diff, across every repository it touches.
+
+Hunk reviews one repository at a time. This builds one patch from all the
+checkouts in a unit, prefixes each path with the checkout that produced it, and
+hands the result to `hunk patch`.
+"""
+import argparse
+import os
+import subprocess
+import sys
+import tempfile
+
+DEFAULT_WORKSPACE = os.environ.get(
+    "WORKCTL_WORKSPACE", os.path.expanduser("~/Projects/vectara-bare"))
+
+
+def is_checkout(path):
+    return os.path.isfile(os.path.join(path, ".git"))
+
+
+def subdirs(path):
+    try:
+        return sorted(d for d in os.listdir(path) if os.path.isdir(os.path.join(path, d)))
+    except OSError:
+        return []
+
+
+def checkouts_of(root):
+    """Every checkout in a unit: the root itself, its children, and its
+    grandchildren. A unit may hold any combination of the three."""
+    found = [root] if is_checkout(root) else []
+    for child_name in subdirs(root):
+        child = os.path.join(root, child_name)
+        if is_checkout(child):
+            found.append(child)
+            continue
+        found += [os.path.join(child, g) for g in subdirs(child)
+                  if is_checkout(os.path.join(child, g))]
+    return found
+
+
+def merge_base(checkout):
+    """The commit this branch grew from, or None when it cannot be resolved."""
+    head = subprocess.run(
+        ["git", "-C", checkout, "symbolic-ref", "--short", "refs/remotes/origin/HEAD"],
+        capture_output=True, text=True)
+    base = head.stdout.strip() or "origin/master"
+    found = subprocess.run(["git", "-C", checkout, "merge-base", base, "HEAD"],
+                           capture_output=True, text=True)
+    return found.stdout.strip() or None
+
+
+def diff_args(checkout, mode):
+    if mode == "staged":
+        return ["diff", "--staged"]
+    if mode == "working":
+        return ["diff"]
+    base = merge_base(checkout)
+    return ["diff", base] if base else None
+
+
+def label_for(checkout, root):
+    inside = os.path.relpath(checkout, root)
+    return os.path.basename(root) if inside == "." else inside
+
+
+def build_patch(root, checkouts, mode, handle):
+    """Write one combined patch. Returns the number of files it covers."""
+    files = 0
+    for checkout in checkouts:
+        args = diff_args(checkout, mode)
+        if args is None:
+            continue
+        label = label_for(checkout, root)
+        out = subprocess.run(
+            ["git", "-C", checkout] + args
+            + [f"--src-prefix=a/{label}/", f"--dst-prefix=b/{label}/"],
+            capture_output=True, text=True)
+        handle.write(out.stdout)
+        files += sum(1 for line in out.stdout.splitlines()
+                     if line.startswith("diff --git "))
+    handle.flush()
+    return files
+
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__)
+    ap.add_argument("name", help="unit name, as it appears under work/")
+    ap.add_argument("--workspace", default=DEFAULT_WORKSPACE)
+    mode = ap.add_mutually_exclusive_group()
+    mode.add_argument("--branch", dest="mode", action="store_const", const="branch",
+                      help="changes since the merge base, committed and uncommitted (default)")
+    mode.add_argument("--staged", dest="mode", action="store_const", const="staged",
+                      help="staged changes only")
+    mode.add_argument("--working", dest="mode", action="store_const", const="working",
+                      help="uncommitted changes only")
+    ap.set_defaults(mode="branch")
+    args, passthrough = ap.parse_known_args()
+
+    root = os.path.join(args.workspace, "work", args.name)
+    if not os.path.isdir(root):
+        sys.exit(f"no unit at {root}")
+
+    checkouts = checkouts_of(root)
+    if not checkouts:
+        sys.exit(f"no checkouts under {root}")
+
+    with tempfile.NamedTemporaryFile("w", suffix=".patch", prefix="workctl-review.",
+                                     delete=False, encoding="utf-8") as handle:
+        patch = handle.name
+        files = build_patch(root, checkouts, args.mode, handle)
+
+    try:
+        if not files:
+            print(f"{args.name}: no changes in {args.mode} mode", file=sys.stderr)
+            return 0
+        print(f"{args.name}: {files} files across {len(checkouts)} checkouts "
+              f"({args.mode})", file=sys.stderr)
+        return subprocess.run(["hunk", "patch", patch] + passthrough).returncode
+    finally:
+        os.unlink(patch)
+
+
+if __name__ == "__main__":
+    sys.exit(main())
