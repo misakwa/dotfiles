@@ -1,0 +1,135 @@
+#!/usr/bin/env -S uv run --script
+# /// script
+# requires-python = ">=3.11"
+# dependencies = []
+# ///
+"""Focus the herdr workspace for a unit, creating one when none exists.
+
+With no name, prints every unit name one per line, so it composes with fzf:
+
+    workctl go "$(workctl go | fzf)"
+"""
+import argparse
+import json
+import os
+import subprocess
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
+from _workctl import WORKSPACE, derive_units, find_unit, herdr, herdr_running
+
+
+def snapshot():
+    """The live session, unwrapped from whatever envelope herdr puts it in."""
+    out = subprocess.run(["herdr", "api", "snapshot"], capture_output=True, text=True)
+    if out.returncode != 0:
+        return None
+    try:
+        data = json.loads(out.stdout)
+    except json.JSONDecodeError:
+        return None
+    if isinstance(data, dict) and "result" in data:
+        data = data["result"] or {}
+    if isinstance(data, dict) and "snapshot" in data:
+        data = data["snapshot"] or {}
+    return data if isinstance(data, dict) else None
+
+
+def live_state():
+    """Every workspace, and every pane, as far as herdr will report them."""
+    data = snapshot()
+    if data:
+        return data.get("workspaces") or [], data.get("panes") or []
+    result = herdr(["workspace", "list"]) or {}
+    return result.get("workspaces") or [], []
+
+
+def inside(path, root):
+    return path == root or path.startswith(root + os.sep)
+
+
+def score(space, panes, unit_root, unit_name):
+    """How well one workspace answers for a unit. Higher wins, 0 means no."""
+    cwds = [c for pane in panes
+            for c in (pane.get("cwd"), pane.get("foreground_cwd")) if c]
+    if any(os.path.realpath(c) == unit_root for c in cwds):
+        return 4
+    checkout = (space.get("worktree") or {}).get("checkout_path")
+    if checkout and inside(os.path.realpath(checkout), unit_root):
+        return 3
+    if any(inside(os.path.realpath(c), unit_root) for c in cwds):
+        return 2
+    # herdr reports no cwd of its own for a workspace, so the label workctl new
+    # wrote is the last thing left to match on.
+    if space.get("label") == unit_name:
+        return 1
+    return 0
+
+
+def find_workspace(unit):
+    spaces, panes = live_state()
+    root = os.path.realpath(unit.root)
+    by_space = {}
+    for pane in panes:
+        by_space.setdefault(pane.get("workspace_id"), []).append(pane)
+
+    ranked = []
+    for space in spaces:
+        rank = score(space, by_space.get(space.get("workspace_id"), []), root, unit.name)
+        if rank:
+            ranked.append((rank, space.get("focused") is True, space))
+    if not ranked:
+        return None
+    ranked.sort(key=lambda row: (row[0], row[1]), reverse=True)
+    return ranked[0][2]
+
+
+def create_workspace(unit):
+    result = herdr(["workspace", "create", "--cwd", unit.root,
+                    "--label", unit.name, "--focus"])
+    if not result:
+        return 1
+    space_id = (result.get("workspace") or {}).get("workspace_id")
+    print(f"created workspace {space_id} at {unit.root}")
+
+    # A herdr workspace binds to at most one worktree, so only a single-checkout
+    # unit can fill the built-in branch and git_status sidebar rows.
+    if space_id and len(unit.checkouts) == 1:
+        if herdr(["worktree", "open", "--workspace", space_id,
+                  "--path", unit.checkouts[0], "--no-focus"]):
+            print(f"bound {os.path.basename(unit.checkouts[0])} to the workspace")
+    return 0
+
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__,
+                                 formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("name", nargs="?", help="unit name; omit to list every unit")
+    ap.add_argument("--workspace", default=WORKSPACE)
+    args = ap.parse_args()
+
+    if not args.name:
+        for unit in derive_units(args.workspace):
+            print(unit.name)
+        return 0
+
+    unit = find_unit(args.name, args.workspace)
+    if not unit:
+        sys.exit(f"no unit named {args.name} under {args.workspace}/work")
+
+    if not herdr_running():
+        sys.exit("herdr is not running; start it with `herdr`, then run this again")
+
+    space = find_workspace(unit)
+    if not space:
+        return create_workspace(unit)
+
+    space_id = space.get("workspace_id")
+    if herdr(["workspace", "focus", space_id]) is None:
+        return 1
+    print(f"focused workspace {space_id} ({space.get('label') or unit.name})")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

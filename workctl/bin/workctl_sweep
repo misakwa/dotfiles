@@ -1,0 +1,128 @@
+#!/usr/bin/env -S uv run --script
+# /// script
+# requires-python = ">=3.11"
+# dependencies = []
+# ///
+"""Settle every unit in one bucket, asking before each one.
+
+Reads the board once, filters it to the bucket, and runs `workctl done` per
+unit against that same board, so the ranking cannot drift mid-sweep.
+
+Nothing on disk changes without --apply. A bare `workctl sweep` is a dry run.
+"""
+import argparse
+import json
+import os
+import subprocess
+import sys
+import tempfile
+
+sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
+from _workctl import WORKSPACE, run
+
+
+def board_rows(workspace):
+    here = os.path.dirname(os.path.realpath(__file__))
+    text = run([os.path.join(here, "workctl_board"), workspace, "--json"])
+    if not text:
+        return None
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        return None
+
+
+def ask(question):
+    if not sys.stdin.isatty():
+        return "n"
+    try:
+        answer = input(f"{question} [y/N/q] ").strip().lower()
+    except EOFError:
+        return "q"
+    if answer in ("q", "quit"):
+        return "q"
+    return "y" if answer in ("y", "yes") else "n"
+
+
+def settle(name, board, args):
+    cmd = [os.path.join(os.path.dirname(os.path.realpath(__file__)), "workctl_done"),
+           name, "--workspace", args.workspace, "--board", board]
+    if args.apply:
+        cmd += ["--apply", "--yes"]
+    if args.force_bucket:
+        cmd.append("--force-bucket")
+    if args.allow_open_pr:
+        cmd.append("--allow-open-pr")
+    # A redirected stdout is block buffered, so the child would otherwise print
+    # its whole run before this process prints the heading above it.
+    sys.stdout.flush()
+    return subprocess.run(cmd).returncode
+
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__,
+                                 formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--bucket", default="SETTLE", help="bucket to sweep (default: SETTLE)")
+    ap.add_argument("--workspace", default=WORKSPACE)
+    ap.add_argument("--apply", action="store_true",
+                    help="really settle each unit; without it nothing changes")
+    ap.add_argument("--dry-run", action="store_true", help="report only (the default)")
+    ap.add_argument("--yes", action="store_true", help="do not ask before each unit")
+    ap.add_argument("--force-bucket", action="store_true",
+                    help="pass --force-bucket to each `workctl done`")
+    ap.add_argument("--allow-open-pr", action="store_true",
+                    help="pass --allow-open-pr to each `workctl done`")
+    args = ap.parse_args()
+
+    if args.apply and args.dry_run:
+        sys.exit("--apply and --dry-run contradict each other")
+
+    wanted = args.bucket.upper()
+    rows = board_rows(args.workspace)
+    if rows is None:
+        sys.exit("could not read the board")
+
+    group = sorted((r for r in rows if r["bucket"] == wanted), key=lambda r: r["age"])
+    print(f"{len(group)} units in {wanted}")
+    print(f"mode: {'APPLY' if args.apply else 'DRY RUN, pass --apply to settle'}\n")
+    for row in group:
+        print(f"  {row['age']:>4}d  {row['name']:<52} {row['n_checkouts']} checkouts")
+    if not group:
+        return 0
+
+    # One board file for the whole sweep, so every unit is judged by the same
+    # ranking that was printed above.
+    handle = tempfile.NamedTemporaryFile("w", suffix=".json", prefix="workctl-sweep.",
+                                         delete=False, encoding="utf-8")
+    with handle:
+        json.dump(rows, handle)
+
+    settled, skipped, failed = [], [], []
+    try:
+        for row in group:
+            name = row["name"]
+            print(f"\n{'=' * 70}")
+            if not args.yes:
+                answer = ask(f"settle {name} ({row['n_checkouts']} checkouts)?")
+                if answer == "q":
+                    print("stopped")
+                    break
+                if answer != "y":
+                    print(f"{name}: skipped")
+                    skipped.append(name)
+                    continue
+            code = settle(name, handle.name, args)
+            (settled if code == 0 else failed).append(name)
+    finally:
+        os.unlink(handle.name)
+
+    print(f"\n{'=' * 70}")
+    verb = "settled" if args.apply else "would settle"
+    print(f"{verb}: {len(settled)}   skipped: {len(skipped)}   stopped: {len(failed)}")
+    for name in failed:
+        print(f"  stopped: {name}")
+    return 1 if failed else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

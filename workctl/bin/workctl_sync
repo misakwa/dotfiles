@@ -1,0 +1,258 @@
+#!/usr/bin/env -S uv run --script
+# /// script
+# requires-python = ">=3.11"
+# dependencies = []
+# ///
+"""Push each unit's pull request and CI state into the herdr sidebar.
+
+Finds the herdr workspace sitting at each unit root, then reports two tokens
+against it, `pr` and `ci`, which the sidebar renders as $pr and $ci. A unit
+with no open pull request reports "-" rather than nothing, so a token left by
+an earlier run never outlives the pull request it described.
+
+"ok" on the `ci` token means no check fails outside the ignore list. It does
+not mean every check finished.
+
+Run it once, from a worktrunk post-switch hook, or on a timer with --interval.
+"""
+import argparse
+import os
+import re
+import sys
+import time
+
+sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
+from _workctl import (WORKSPACE, IGNORED_CHECKS, derive_units, failing_checks,
+                      herdr, herdr_running, parallel, pr_facts, run)
+
+SOURCE = "workctl"
+REMOTE_URL = re.compile(r"[:/]([^/:]+)/([^/]+?)(?:\.git)?$")
+EMPTY = "-"
+MAX_VALUE = 24
+
+# herdr caps ttl_ms at one day. See WorkspaceReportMetadataParams in
+# `herdr api schema --json`.
+MAX_TTL_MS = 86_400_000
+ONCE_TTL_MS = 3_600_000
+TTL_INTERVALS = 3
+
+REVIEW_WORDS = {"APPROVED": "approved", "CHANGES_REQUESTED": "changes"}
+
+
+def shorten(text):
+    return text if len(text) <= MAX_VALUE else text[:MAX_VALUE - 1] + "…"
+
+
+def pr_token(prs):
+    """The `pr` token: the lowest-numbered pull request and its review state."""
+    if not prs:
+        return EMPTY
+    repo, pr = min(prs, key=lambda pair: pair[1]["number"])
+    word = "draft" if pr.get("isDraft") else REVIEW_WORDS.get(pr.get("reviewDecision"), "")
+    rest = f" +{len(prs) - 1}" if len(prs) > 1 else ""
+    return shorten(f"#{pr['number']}{' ' + word if word else ''}{rest}")
+
+
+def ci_token(prs, failures):
+    if not prs:
+        return EMPTY
+    return shorten(",".join(failures)) if failures else "ok"
+
+
+def snapshot():
+    result = herdr(["api", "snapshot"], quiet=True)
+    if not result:
+        return None
+    return result.get("snapshot") or result
+
+
+def workspace_dirs(session):
+    """Map each workspace id to every directory it is known to sit in."""
+    dirs = {}
+    for workspace in session.get("workspaces") or []:
+        found = set()
+        tree = workspace.get("worktree") or {}
+        if tree.get("checkout_path"):
+            found.add(tree["checkout_path"])
+        dirs[workspace["workspace_id"]] = found
+    for pane in session.get("panes") or []:
+        wid = pane.get("workspace_id")
+        if not wid:
+            continue
+        for key in ("cwd", "foreground_cwd"):
+            if pane.get(key):
+                dirs.setdefault(wid, set()).add(pane[key])
+    return dirs
+
+
+def match_units(units, dirs):
+    """Map each workspace id to the unit it belongs to.
+
+    A workspace belongs to the unit whose root is the longest prefix of one of
+    its directories, so a sub-unit wins over its parent.
+    """
+    roots = sorted(((os.path.realpath(u.root), u) for u in units),
+                   key=lambda pair: -len(pair[0]))
+    found = {}
+    for wid, candidates in dirs.items():
+        best = None
+        for candidate in candidates:
+            real = os.path.realpath(candidate)
+            for root, unit in roots:
+                if real == root or real.startswith(root + os.sep):
+                    if best is None or len(root) > len(os.path.realpath(best.root)):
+                        best = unit
+                    break
+        if best:
+            found[wid] = best
+    return found
+
+
+def checkout_remotes(checkouts):
+    """Map each checkout to (owner, repo, branch), read straight from git.
+
+    `wt list` answers the same question, but it walks every checkout in the
+    whole workspace and costs about 13 seconds; this costs milliseconds.
+    """
+    def resolve(checkout):
+        branch = run(["git", "-C", checkout, "rev-parse", "--abbrev-ref", "HEAD"]).strip()
+        url = run(["git", "-C", checkout, "remote", "get-url", "origin"]).strip()
+        match = REMOTE_URL.search(url)
+        if not match or branch in ("", "HEAD"):
+            return checkout, None
+        return checkout, (match.group(1), match.group(2), branch)
+
+    return dict(parallel(resolve, checkouts, limit=16))
+
+
+def unit_state(unit, remotes, prs):
+    """The open pull requests for one unit, as (repo, record) pairs."""
+    found = []
+    for checkout in unit.checkouts:
+        value = remotes.get(checkout)
+        if not value:
+            continue
+        owner, repo, branch = value
+        pr = prs.get((owner, repo, branch))
+        if pr:
+            found.append((repo, pr))
+    return found
+
+
+def report(workspace_id, pr, ci, ttl_ms, dry_run):
+    cmd = ["workspace", "report-metadata", workspace_id, "--source", SOURCE,
+           "--token", f"pr={pr}", "--token", f"ci={ci}"]
+    if ttl_ms:
+        cmd += ["--ttl-ms", str(ttl_ms)]
+    # A timer run and a post-switch hook can overlap, so stamp each report in
+    # milliseconds and let herdr drop the one that lost the race.
+    cmd += ["--seq", str(int(time.time() * 1000))]
+    if dry_run:
+        print("  would run: herdr " + " ".join(cmd))
+        return True
+    return herdr(cmd) is not None
+
+
+def once(args, ttl_ms):
+    session = snapshot()
+    if session is None:
+        print("herdr: no snapshot; nothing to sync", file=sys.stderr)
+        return 1
+
+    units = derive_units(args.workspace)
+    matched = match_units(units, workspace_dirs(session))
+    if not matched:
+        print("no herdr workspace sits at a unit root; nothing to sync")
+        return 0
+
+    remotes = checkout_remotes([c for unit in matched.values() for c in unit.checkouts])
+    wanted_repos = {}
+    for value in remotes.values():
+        if value:
+            wanted_repos.setdefault(value[0], set()).add(value[1])
+
+    prs = {}
+    for owner, repos in wanted_repos.items():
+        for key, pr in pr_facts(sorted(repos), owner=owner).items():
+            prs[(owner,) + key] = pr
+
+    state = {wid: unit_state(unit, remotes, prs) for wid, unit in matched.items()}
+    wanted = {(repo, pr["number"]) for found in state.values() for repo, pr in found}
+    checks = failing_checks(wanted, ignored=IGNORED_CHECKS | set(args.ignore_check))
+
+    sent = 0
+    for wid, unit in sorted(matched.items(), key=lambda pair: pair[1].name):
+        found = state[wid]
+        failures = sorted({n for repo, pr in found
+                           for n in checks.get((repo, pr["number"]), [])})
+        pr = pr_token(found)
+        ci = ci_token(found, failures)
+        print(f"{unit.name:<52} pr={pr:<16} ci={ci}")
+        if report(wid, pr, ci, ttl_ms, args.dry_run):
+            sent += 1
+    print(f"\n{sent}/{len(matched)} workspaces updated")
+    return 0
+
+
+def seconds(text):
+    value = int(text)
+    if value < 1:
+        raise argparse.ArgumentTypeError("takes a whole number of seconds, at least 1")
+    return value
+
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__,
+                                 formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--workspace", default=WORKSPACE)
+    mode = ap.add_mutually_exclusive_group()
+    mode.add_argument("--once", dest="interval", action="store_const", const=0,
+                      help="sync a single time and exit (default)")
+    mode.add_argument("--interval", type=seconds, metavar="SECONDS",
+                      help="sync again every SECONDS until interrupted")
+    ap.add_argument("--ttl-ms", type=int, metavar="MS",
+                    help="token lifetime; 0 keeps the tokens until the next run")
+    ap.add_argument("--ignore-check", action="append", default=[],
+                    help="check name to treat as noise (repeatable)")
+    ap.add_argument("--dry-run", action="store_true",
+                    help="print the herdr calls instead of making them")
+    ap.set_defaults(interval=0)
+    args = ap.parse_args()
+
+    if args.ttl_ms is not None:
+        ttl_ms = args.ttl_ms
+    elif args.interval:
+        ttl_ms = min(args.interval * TTL_INTERVALS * 1000, MAX_TTL_MS)
+    else:
+        ttl_ms = ONCE_TTL_MS
+    if ttl_ms and not 1 <= ttl_ms <= MAX_TTL_MS:
+        sys.exit(f"--ttl-ms takes 0, or 1 to {MAX_TTL_MS}")
+
+    if not os.path.isdir(os.path.join(args.workspace, "work")):
+        sys.exit(f"no work/ directory under {args.workspace}")
+
+    if not args.dry_run and not herdr_running():
+        print("herdr is not running; nothing to sync")
+        return 0
+
+    if not args.interval:
+        return once(args, ttl_ms)
+
+    while True:
+        code = once(args, ttl_ms)
+        if code:
+            return code
+        try:
+            time.sleep(args.interval)
+        except KeyboardInterrupt:
+            return 0
+        if not args.dry_run and not herdr_running():
+            print("herdr stopped; leaving the sync loop")
+            return 0
+
+
+if __name__ == "__main__":
+    try:
+        sys.exit(main())
+    except KeyboardInterrupt:
+        sys.exit(130)

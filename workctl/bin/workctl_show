@@ -1,0 +1,188 @@
+#!/usr/bin/env -S uv run --script
+# /// script
+# requires-python = ">=3.11"
+# dependencies = []
+# ///
+"""Print one unit in full: its checkouts, pull requests, agents, and notes."""
+import argparse
+import json
+import os
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
+from _workctl import (WORKSPACE, IGNORED_CHECKS, agents_by_unit, derive_units,
+                      failing_checks, find_unit, git_facts, is_dirty, pr_facts,
+                      run)
+
+
+def human_size(size):
+    for suffix in ("B", "K", "M", "G"):
+        if size < 1024 or suffix == "G":
+            return f"{size:.0f}{suffix}"
+        size /= 1024
+
+
+def note_files(root):
+    """Every unversioned file at the unit root. Directories are not notes."""
+    try:
+        entries = sorted(os.scandir(root), key=lambda entry: entry.name)
+    except OSError:
+        return []
+    notes = []
+    for entry in entries:
+        if entry.name == ".git" or entry.is_dir():
+            continue
+        try:
+            size = entry.stat().st_size
+        except OSError:
+            size = 0
+        notes.append({"name": entry.name, "size": size})
+    return notes
+
+
+def agents_of(unit, units):
+    """The unit's agents, plus its sub-units' when the name stands for them.
+
+    `find_unit` gathers the checkouts of every sub-unit under a parent name, so
+    the agents follow the same rule and the two halves of the report agree.
+    """
+    found = agents_by_unit(units)
+    names = [unit.name]
+    if unit.name not in {u.name for u in units}:
+        names += [u.name for u in units if u.name.startswith(unit.name + "/")]
+    return [agent for name in names for agent in found.get(name, [])]
+
+
+def git_probe(checkout):
+    """The same facts read straight from git, for a checkout worktrunk misses.
+
+    A unit may hold a worktree of a repository that lives outside the bare
+    workspace, and `wt list` only ever reports the repositories inside it.
+    """
+    origin = run(["git", "-C", checkout, "config", "--get", "remote.origin.url"]).strip()
+    repo = os.path.basename(origin).removesuffix(".git") or None
+    branch = run(["git", "-C", checkout, "rev-parse", "--abbrev-ref", "HEAD"]).strip()
+    if branch in ("", "HEAD"):
+        branch = None
+
+    base = run(["git", "-C", checkout, "symbolic-ref", "--short",
+                "refs/remotes/origin/HEAD"]).strip()
+    ahead = behind = None
+    if base and branch:
+        counts = run(["git", "-C", checkout, "rev-list", "--left-right", "--count",
+                      f"{base}...HEAD"]).split()
+        if len(counts) == 2:
+            behind, ahead = int(counts[0]), int(counts[1])
+
+    dirty = bool(run(["git", "-C", checkout, "status", "--porcelain"]).strip())
+    return dict(repo=repo, branch=branch, dirty=dirty, ahead=ahead, behind=behind,
+                state=None, source="git")
+
+
+def inspect_checkout(unit, checkout, git):
+    row = dict(path=checkout, label=unit.label_for(checkout), repo=None,
+               branch=None, dirty=None, ahead=None, behind=None, state=None,
+               source=None, pr=None, failures=[])
+    repo, item = git.get(os.path.realpath(checkout), (None, None))
+    if item is None:
+        row.update(git_probe(checkout))
+        return row
+    default = item.get("default_branch") or {}
+    row.update(repo=repo, branch=item.get("branch"), dirty=is_dirty(item),
+               ahead=default.get("ahead"), behind=default.get("behind"),
+               state=(item.get("display") or {}).get("state"), source="worktrunk")
+    return row
+
+
+def collect(unit, units, workspace, ignore):
+    git = git_facts(workspace)
+    rows = [inspect_checkout(unit, c, git) for c in unit.checkouts]
+
+    repos = sorted({row["repo"] for row in rows if row["repo"]})
+    prs = pr_facts(repos, workspace=workspace) if repos else {}
+    for row in rows:
+        row["pr"] = prs.get((row["repo"], row["branch"]))
+
+    pairs = {(row["repo"], row["pr"]["number"]) for row in rows if row["pr"]}
+    checks = failing_checks(pairs, ignored=IGNORED_CHECKS | set(ignore))
+    for row in rows:
+        if row["pr"]:
+            row["failures"] = checks.get((row["repo"], row["pr"]["number"]), [])
+
+    return dict(name=unit.name, root=unit.root, age=unit.age_days,
+                checkouts=rows, notes=note_files(unit.root),
+                agents=[dict(name=a.get("name"), kind=a.get("agent"),
+                             status=a.get("agent_status"), pane=a.get("pane_id"),
+                             cwd=a.get("foreground_cwd") or a.get("cwd"))
+                        for a in agents_of(unit, units)])
+
+
+def render_checkout(row):
+    print(f"  {row['label']}  ({row['repo'] or 'unknown repository'})")
+    facts = [row["branch"] or "detached HEAD", "dirty" if row["dirty"] else "clean"]
+    if row["ahead"] is not None:
+        facts.append(f"ahead {row['ahead']}")
+    if row["behind"] is not None:
+        facts.append(f"behind {row['behind']}")
+    if row["state"]:
+        facts.append(row["state"])
+    print("    " + "  ".join(facts))
+
+    pr = row["pr"]
+    if not pr:
+        print("    no open pull request")
+        return
+    review = "draft" if pr.get("isDraft") else (pr.get("reviewDecision") or "pending").lower()
+    print(f"    {row['repo']}#{pr['number']}  {review}  {pr.get('url', '')}".rstrip())
+    if row["failures"]:
+        print(f"    checks fail: {', '.join(row['failures'])}")
+    else:
+        print("    no failing check")
+
+
+def render(report):
+    print(report["name"])
+    print(f"  {report['root']}")
+    print(f"  {report['age']} days since the newest change")
+
+    print(f"\ncheckouts ({len(report['checkouts'])})")
+    for row in report["checkouts"]:
+        render_checkout(row)
+    if not report["checkouts"]:
+        print("  none; this unit holds only notes")
+
+    print(f"\nagents ({len(report['agents'])})")
+    for agent in report["agents"]:
+        label = agent["name"] or agent["kind"] or "agent"
+        print(f"  {label}  {agent['status']}  {agent['cwd'] or ''}".rstrip())
+
+    print(f"\nnotes ({len(report['notes'])})")
+    for note in report["notes"]:
+        print(f"  {note['name']}  {human_size(note['size'])}")
+
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__)
+    ap.add_argument("name", help="unit name, as it appears under work/")
+    ap.add_argument("--workspace", default=WORKSPACE)
+    ap.add_argument("--ignore-check", action="append", default=[],
+                    help="check name to treat as noise (repeatable)")
+    ap.add_argument("--json", action="store_true")
+    args = ap.parse_args()
+
+    units = derive_units(args.workspace)
+    unit = find_unit(args.name, args.workspace)
+    if not unit:
+        sys.exit(f"no unit named {args.name} under {args.workspace}/work")
+
+    report = collect(unit, units, args.workspace, args.ignore_check)
+    if args.json:
+        json.dump(report, sys.stdout, indent=1)
+        print()
+        return 0
+    render(report)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

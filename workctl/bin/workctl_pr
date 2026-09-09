@@ -1,0 +1,237 @@
+#!/usr/bin/env -S uv run --script
+# /// script
+# requires-python = ">=3.11"
+# dependencies = []
+# ///
+"""Show a unit's pull requests and draft replies to its review threads.
+
+Reads only. It never posts a comment, resolves a thread, approves, merges, or
+closes anything. --draft writes its suggested replies to standard output for
+you to edit and post yourself.
+"""
+import argparse
+import json
+import os
+import re
+import sys
+import textwrap
+
+sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
+from _workctl import (WORKSPACE, IGNORED_CHECKS, failing_checks, find_unit,
+                      parallel, run)
+
+PR_FIELDS = "number,title,url,reviewDecision,isDraft,headRefName"
+
+REMOTE_URL = re.compile(r"[:/]([^/:]+)/([^/]+?)(?:\.git)?$")
+
+# Every gh call in this file is a read. Nothing here takes a mutation.
+THREADS_QUERY = """
+query($owner: String!, $repo: String!, $number: Int!) {
+  repository(owner: $owner, name: $repo) {
+    pullRequest(number: $number) {
+      reviewThreads(first: 100) {
+        nodes {
+          id
+          isResolved
+          isOutdated
+          path
+          line
+          comments(first: 50) {
+            nodes {
+              author { login }
+              createdAt
+              body
+              url
+            }
+          }
+        }
+      }
+    }
+  }
+}
+"""
+
+WRAP = textwrap.TextWrapper(width=78, initial_indent="      ",
+                            subsequent_indent="      ")
+
+
+def checkout_remotes(checkouts):
+    """Map each checkout to (owner, repo, branch), read straight from git.
+
+    `wt list` answers the same question, but it walks every checkout in the
+    whole workspace and costs about 13 seconds; this costs milliseconds.
+    """
+    def resolve(checkout):
+        branch = run(["git", "-C", checkout, "rev-parse", "--abbrev-ref", "HEAD"]).strip()
+        url = run(["git", "-C", checkout, "remote", "get-url", "origin"]).strip()
+        match = REMOTE_URL.search(url)
+        if not match or branch in ("", "HEAD"):
+            return checkout, None
+        return checkout, (match.group(1), match.group(2), branch)
+
+    return dict(parallel(resolve, checkouts, limit=16))
+
+
+def unit_prs(unit, owner_override):
+    """Every open pull request for the unit, as (owner, repo, branch, record).
+
+    Filters by head branch rather than listing the repository, because these
+    repositories carry hundreds of open pull requests each.
+    """
+    remotes = checkout_remotes(unit.checkouts)
+
+    def load(key):
+        owner, repo, branch = key
+        text = run(["gh", "pr", "list", "--repo", f"{owner}/{repo}", "--state", "open",
+                    "--head", branch, "--json", PR_FIELDS])
+        return [(owner, repo, branch, pr) for pr in (json.loads(text) if text else [])]
+
+    keys = sorted({(owner_override or owner, repo, branch)
+                   for value in remotes.values() if value
+                   for owner, repo, branch in [value]})
+    return [row for batch in parallel(load, keys) for row in batch]
+
+
+def review_threads(repo, number, owner, include_resolved):
+    text = run(["gh", "api", "graphql", "-f", f"query={THREADS_QUERY}",
+                "-F", f"owner={owner}", "-F", f"repo={repo}", "-F", f"number={number}"])
+    if not text:
+        return None
+    try:
+        data = json.loads(text)["data"]["repository"]["pullRequest"]["reviewThreads"]
+    except (KeyError, TypeError, json.JSONDecodeError):
+        return None
+    nodes = [t for t in data["nodes"] if t["comments"]["nodes"]]
+    return nodes if include_resolved else [t for t in nodes if not t["isResolved"]]
+
+
+def location(thread):
+    path = thread.get("path") or "(no file)"
+    return f"{path}:{thread['line']}" if thread.get("line") else path
+
+
+def draft_reply(thread):
+    """A starting point for a reply, chosen from cues in the last comment.
+
+    Every draft leaves an angle-bracket placeholder, because the tool knows the
+    shape of the answer and not the answer.
+    """
+    body = thread["comments"]["nodes"][-1]["body"].strip()
+    lower = body.lower()
+
+    if lower.startswith(("nit", "minor", "style")):
+        return "Taken, thank you. <Say whether you changed it, or why you kept it.>"
+    if "?" in body:
+        return ("<Answer the question directly.> "
+                "<Then say what, if anything, changed in the code.>")
+    if any(cue in lower for cue in ("should", "could", "instead", "prefer",
+                                   "consider", "why not", "rather than")):
+        return ("Good point. <Agree and describe the change, or explain the "
+                "constraint that rules it out.>")
+    if any(cue in lower for cue in ("wrong", "broken", "bug", "does not",
+                                    "doesn't", "not right", "incorrect")):
+        return ("<Confirm or correct the diagnosis.> "
+                "<Then name the fix and the commit that carries it.>")
+    return "<Answer the comment, then say what changed in the code.>"
+
+
+def show_threads(threads, draft):
+    print(f"  review threads ({len(threads)})")
+    for index, thread in enumerate(threads, 1):
+        marks = []
+        if thread["isResolved"]:
+            marks.append("resolved")
+        if thread["isOutdated"]:
+            marks.append("outdated")
+        suffix = f"  [{', '.join(marks)}]" if marks else ""
+        print(f"\n  [{index}] {location(thread)}{suffix}")
+        for comment in thread["comments"]["nodes"]:
+            who = (comment.get("author") or {}).get("login") or "(unknown)"
+            print(f"    {who}  {comment['createdAt'][:10]}")
+            for line in comment["body"].strip().splitlines():
+                print(WRAP.fill(line) if line.strip() else "")
+        print(f"    {thread['comments']['nodes'][-1]['url']}")
+        if draft:
+            print(f"\n    draft reply to [{index}]:")
+            print("    " + "-" * 60)
+            for line in textwrap.wrap(draft_reply(thread), width=72):
+                print(f"    {line}")
+            print("    " + "-" * 60)
+
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__,
+                                 formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("name", help="unit name, as it appears under work/")
+    ap.add_argument("--workspace", default=WORKSPACE)
+    ap.add_argument("--owner", help="override the owner read from the git remote")
+    ap.add_argument("--threads", action="store_true",
+                    help="fetch the unresolved review threads and their comments")
+    ap.add_argument("--all-threads", action="store_true",
+                    help="include the resolved and outdated threads")
+    ap.add_argument("--draft", action="store_true",
+                    help="print a suggested reply per thread; implies --threads")
+    ap.add_argument("--ignore-check", action="append", default=[],
+                    help="check name to treat as noise (repeatable)")
+    ap.add_argument("--json", action="store_true")
+    args = ap.parse_args()
+
+    unit = find_unit(args.name, args.workspace)
+    if not unit:
+        sys.exit(f"no unit named {args.name} under {args.workspace}/work")
+
+    prs = unit_prs(unit, args.owner)
+    want_threads = args.threads or args.all_threads or args.draft
+    ignored = IGNORED_CHECKS | set(args.ignore_check)
+    checks = {}
+    for owner in {row[0] for row in prs}:
+        checks.update(failing_checks(
+            {(repo, pr["number"]) for o, repo, _, pr in prs if o == owner},
+            owner=owner, ignored=ignored))
+
+    rows = []
+    for owner, repo, branch, pr in sorted(prs, key=lambda row: (row[1], row[3]["number"])):
+        threads = (review_threads(repo, pr["number"], owner, args.all_threads)
+                   if want_threads else None)
+        rows.append({"owner": owner, "repo": repo, "branch": branch, "pr": pr,
+                     "failures": checks.get((repo, pr["number"]), []),
+                     "threads": threads})
+
+    if args.json:
+        json.dump({"unit": unit.name, "prs": rows}, sys.stdout, indent=1)
+        print()
+        return 0
+
+    if not rows:
+        print(f"{unit.name}: no open pull request "
+              f"({len(unit.checkouts)} checkouts)")
+        return 0
+
+    print(f"{unit.name}\n")
+    for row in rows:
+        pr = row["pr"]
+        state = "draft" if pr["isDraft"] else (pr.get("reviewDecision") or "pending").lower()
+        print(f"{row['repo']}#{pr['number']}  {state}")
+        print(f"  {pr['title']}")
+        print(f"  {pr['url']}")
+        print(f"  branch: {row['branch']}")
+        print(f"  checks: {', '.join(row['failures']) if row['failures'] else 'ok'}")
+        if row["threads"] is None:
+            print()
+            continue
+        if not row["threads"]:
+            print("  review threads: none"
+                  + ("" if args.all_threads else " unresolved"))
+            print()
+            continue
+        print()
+        show_threads(row["threads"], args.draft)
+        print()
+
+    if args.draft:
+        print("Drafts only. workctl never posts; copy what you want to send.")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -60,7 +60,9 @@ def describe(name):
     for quote in ('"""', "'''"):
         start = body.find(quote)
         if start != -1:
-            return body[start + 3:].splitlines()[0].strip()
+            # A one-line docstring closes on the same line; drop the quotes.
+            line = body[start + 3:].splitlines()[0]
+            return line.split(quote)[0].strip()
     return ""
 
 

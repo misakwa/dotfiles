@@ -1,0 +1,470 @@
+#!/usr/bin/env -S uv run --script
+# /// script
+# requires-python = ">=3.11"
+# dependencies = []
+# ///
+"""Settle one unit: archive the notes, close the agents, remove the checkouts.
+
+Runs the seven steps of the settle sequence in order and stops at the first one
+that needs a decision. It reports the pull request state; it never changes it.
+
+Nothing on disk changes without --apply. A bare `workctl done <name>` is a dry
+run. Removal goes through `wt remove --reap`, so worktrunk's own gates stand:
+--force is never passed, and `git worktree remove` is never called.
+"""
+import argparse
+import datetime
+import glob
+import json
+import os
+import shutil
+import subprocess
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
+from _workctl import (OWNER, WORKSPACE, agents_by_unit, derive_units, herdr,
+                      herdr_running, primary_worktree, run, work_dir)
+
+SETTLED_STATES = ("idle", "done")
+PR_FIELDS = "number,state,mergedAt,url,isDraft,reviewDecision"
+
+
+# --- reading the world ------------------------------------------------------
+
+def git(checkout, *args):
+    """Standard output of a git command, or None when it failed.
+
+    None and "" mean different things here: a clean `status --porcelain` is
+    empty, and a failed one must not be read as clean.
+    """
+    out = subprocess.run(["git", "-C", checkout] + list(args),
+                         capture_output=True, text=True)
+    return out.stdout if out.returncode == 0 else None
+
+
+def repo_of(checkout):
+    url = (git(checkout, "remote", "get-url", "origin") or "").strip()
+    if not url:
+        return None
+    name = url.rstrip("/").rsplit("/", 1)[-1]
+    return name[:-4] if name.endswith(".git") else name
+
+
+def branch_of(checkout):
+    return (git(checkout, "symbolic-ref", "--quiet", "--short", "HEAD") or "").strip() or None
+
+
+def remote_state(checkout, branch):
+    ref = (git(checkout, "rev-parse", "--verify", "--quiet",
+               f"refs/remotes/origin/{branch}") or "").strip()
+    if not ref:
+        return "not pushed"
+    head = (git(checkout, "rev-parse", "HEAD") or "").strip()
+    return "pushed" if ref == head else "pushed, remote differs"
+
+
+def pull_requests(repo, branch, owner):
+    text = run(["gh", "pr", "list", "--repo", f"{owner}/{repo}", "--head", branch,
+                "--state", "all", "--json", PR_FIELDS, "--limit", "20"])
+    try:
+        return json.loads(text) if text else []
+    except json.JSONDecodeError:
+        return []
+
+
+def board_rows(path, workspace):
+    if path:
+        with open(path, encoding="utf-8") as handle:
+            return json.load(handle)
+    text = run([os.path.join(os.path.dirname(os.path.realpath(__file__)), "workctl_board"),
+                workspace, "--json"])
+    if not text:
+        return None
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        return None
+
+
+# --- the unit's own files ---------------------------------------------------
+
+def payload_entries(unit):
+    """Every entry at the unit root that is not a checkout and holds no checkout."""
+    checkouts = [os.path.realpath(c) for c in unit.checkouts]
+    if os.path.realpath(unit.root) in checkouts:
+        return []
+    found = []
+    for entry in sorted(os.listdir(unit.root)):
+        real = os.path.realpath(os.path.join(unit.root, entry))
+        if any(c == real or c.startswith(real + os.sep) for c in checkouts):
+            continue
+        found.append(entry)
+    return found
+
+
+def transcript_for(agent, session):
+    value = session.get("value") or ""
+    if session.get("kind") == "path":
+        return value if os.path.exists(value) else ""
+    kind = (session.get("agent") or agent.get("agent") or "").lower()
+    if "codex" in kind:
+        pattern = os.path.expanduser(f"~/.codex/sessions/**/*{value}*.jsonl")
+    else:
+        pattern = os.path.expanduser(f"~/.claude/projects/*/{value}.jsonl")
+    hits = sorted(glob.glob(pattern, recursive=True))
+    return hits[0] if hits else ""
+
+
+def prune_empty(path, stop):
+    """Remove genuinely empty directories upwards, never past `stop`."""
+    removed = []
+    stop = os.path.realpath(stop)
+    path = os.path.realpath(path)
+    while path != stop and path.startswith(stop + os.sep):
+        try:
+            if os.listdir(path):
+                break
+            os.rmdir(path)
+        except OSError:
+            break
+        removed.append(path)
+        path = os.path.dirname(path)
+    return removed
+
+
+def confirm(question):
+    if not sys.stdin.isatty():
+        return False
+    try:
+        return input(f"{question} [y/N] ").strip().lower() in ("y", "yes")
+    except EOFError:
+        return False
+
+
+# --- the settle sequence ----------------------------------------------------
+
+def step_working_tree(unit, apply_):
+    print("\n1. uncommitted changes")
+    stop = False
+    for checkout in unit.checkouts:
+        label = unit.label_for(checkout)
+        status = git(checkout, "status", "--porcelain")
+        if status is None:
+            print(f"   {label}: cannot read git status")
+            stop = True
+            continue
+        lines = [line for line in status.splitlines() if line.strip()]
+        if not lines:
+            print(f"   {label}: clean")
+            continue
+        stop = True
+        plural = "change" if len(lines) == 1 else "changes"
+        print(f"   {label}: {len(lines)} uncommitted {plural}")
+        for line in lines[:5]:
+            print(f"     {line}")
+        if len(lines) > 5:
+            print(f"     ... and {len(lines) - 5} more")
+    if stop:
+        print(f"\nstopped at step 1. Review them first:\n"
+              f"  workctl review {unit.name} --working")
+    return stop
+
+
+def step_branches(unit, row, owner):
+    print("\n2. branches")
+    facts = []
+    for checkout in unit.checkouts:
+        label = unit.label_for(checkout)
+        repo = repo_of(checkout)
+        branch = branch_of(checkout)
+        if not branch:
+            print(f"   {label}: detached HEAD, no branch; only the commits survive")
+            facts.append(dict(label=label, repo=repo, branch=None, prs=[]))
+            continue
+        pushed = remote_state(checkout, branch)
+        prs = pull_requests(repo, branch, owner) if repo else []
+        opened = [p for p in prs if p["state"] == "OPEN"]
+        merged = [p for p in prs if p["state"] == "MERGED"]
+        closed = [p for p in prs if p["state"] == "CLOSED"]
+        state = "no pull request"
+        if opened:
+            state = "OPEN " + " ".join(f"#{p['number']}" for p in opened)
+        elif merged:
+            state = "merged " + " ".join(f"#{p['number']}" for p in merged)
+        elif closed:
+            state = "closed unmerged " + " ".join(f"#{p['number']}" for p in closed)
+        print(f"   {label}: {repo or '?'} {branch}")
+        print(f"     {pushed}, {state}")
+        facts.append(dict(label=label, repo=repo, branch=branch, prs=prs, open=opened))
+    if row:
+        print(f"   worktrunk: {row['integrated']} of {row['n_known']} checkouts integrated")
+    return facts
+
+
+def step_merged(facts):
+    print("\n3. merged pull requests")
+    merged = [(f, p) for f in facts for p in f["prs"] if p["state"] == "MERGED"]
+    if not merged:
+        print("   none")
+    for fact, pr in merged:
+        when = (pr.get("mergedAt") or "")[:10]
+        print(f"   {fact['repo']}#{pr['number']} merged {when}  {pr['url']}")
+    return merged
+
+
+def step_agents(unit, workspace, apply_):
+    """Close the finished panes and return (session records, workspace ids)."""
+    print("\n4. agent threads")
+    if not herdr_running():
+        print("   herdr is not running; no pane to close and no session to record")
+        return [], []
+
+    live = agents_by_unit(derive_units(workspace)).get(unit.name, [])
+    if not live:
+        print("   no agent inside this unit")
+        return [], []
+
+    records, spaces = [], []
+    for agent in live:
+        status = agent.get("agent_status")
+        pane = agent.get("pane_id")
+        kind = agent.get("agent") or "agent"
+        if agent.get("workspace_id"):
+            spaces.append(agent["workspace_id"])
+        if status not in SETTLED_STATES:
+            print(f"   {kind} in pane {pane} is {status}; left alone")
+            continue
+        session = agent.get("agent_session") or {}
+        record = dict(pane=pane, agent=kind, status=status,
+                      kind=session.get("kind"), value=session.get("value"),
+                      source=session.get("source"),
+                      transcript=transcript_for(agent, session) if session else "")
+        records.append(record)
+        print(f"   {kind} in pane {pane} is {status}; session "
+              f"{record['value'] or 'unknown'}")
+        if record["transcript"]:
+            print(f"     transcript {record['transcript']}")
+        if apply_:
+            herdr(["pane", "close", pane])
+            print(f"     closed pane {pane}")
+        else:
+            print(f"     would close pane {pane}")
+    return records, sorted(set(spaces))
+
+
+def capture_hunk(unit, dest, apply_):
+    """Live Hunk reviews for the unit, written beside SESSIONS.txt."""
+    written = []
+    for checkout in unit.checkouts:
+        out = subprocess.run(["hunk", "session", "review", "--repo", checkout,
+                              "--include-patch", "--include-notes", "--json"],
+                             capture_output=True, text=True)
+        if out.returncode != 0 or not out.stdout.strip():
+            continue
+        name = "HUNK-" + unit.label_for(checkout).replace(os.sep, "-") + ".json"
+        if apply_:
+            with open(os.path.join(dest, name), "w", encoding="utf-8") as handle:
+                handle.write(out.stdout)
+        written.append(name)
+    return written
+
+
+def step_archive(unit, workspace, records, apply_):
+    print("\n5. archive")
+    entries = payload_entries(unit)
+    dest = os.path.join(workspace, ".archive", unit.name)
+
+    if not entries and not records:
+        print("   no unversioned payload and no agent session; nothing to archive")
+        return True
+
+    print(f"   destination {dest}")
+    for entry in entries:
+        print(f"   {'move' if apply_ else 'would move'} {entry}")
+    print(f"   {'write' if apply_ else 'would write'} SESSIONS.txt "
+          f"({len(records)} sessions)")
+
+    clash = [e for e in entries if os.path.exists(os.path.join(dest, e))]
+    if clash:
+        print(f"\nstopped at step 5. The archive already holds: {', '.join(clash)}",
+              file=sys.stderr)
+        return False
+
+    if not apply_:
+        capture = capture_hunk(unit, dest, False)
+        for name in capture:
+            print(f"   would capture live Hunk review as {name}")
+        return True
+
+    try:
+        os.makedirs(dest, exist_ok=True)
+        for name in capture_hunk(unit, dest, True):
+            print(f"   captured live Hunk review as {name}")
+        with open(os.path.join(dest, "SESSIONS.txt"), "w", encoding="utf-8") as handle:
+            stamp = datetime.datetime.now().astimezone().isoformat(timespec="seconds")
+            handle.write(f"# workctl done {unit.name} on {stamp}\n")
+            if not records:
+                handle.write("# no agent session was recorded\n")
+            for record in records:
+                handle.write(f"pane {record['pane']}  agent={record['agent']}  "
+                             f"status={record['status']}  kind={record['kind']}  "
+                             f"value={record['value']}\n")
+                if record["transcript"]:
+                    handle.write(f"  transcript: {record['transcript']}\n")
+        for entry in entries:
+            shutil.move(os.path.join(unit.root, entry), os.path.join(dest, entry))
+    except OSError as error:
+        print(f"\nstopped at step 5. The archive failed: {error}", file=sys.stderr)
+        return False
+    return True
+
+
+def step_remove(unit, workspace, apply_):
+    print("\n6. checkouts")
+    stop = False
+    for checkout in unit.checkouts:
+        label = unit.label_for(checkout)
+        repo = repo_of(checkout)
+        cwd = primary_worktree(repo, workspace) if repo else None
+        if not cwd:
+            print(f"   {label}: no primary worktree for {repo or '?'}; skipped")
+            stop = True
+            continue
+        cmd = ["wt", "remove", "--reap", "--foreground", "--format", "json", "-y",
+               checkout]
+        if not apply_:
+            print(f"   {label}: would run (in {cwd})")
+            print(f"     {' '.join(cmd)}")
+            continue
+        out = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True)
+        detail = (out.stdout or out.stderr).strip()
+        if out.returncode != 0:
+            print(f"   {label}: wt remove refused: {detail}", file=sys.stderr)
+            stop = True
+            continue
+        print(f"   {label}: removed. {detail}")
+
+    if apply_ and not stop:
+        # `wt remove` drops the checkout but leaves the unit directory behind.
+        for path in prune_empty(unit.root, work_dir(workspace)):
+            print(f"   removed empty directory {path}")
+    elif not apply_:
+        print(f"   would remove {unit.root} if it is then empty")
+    return not stop
+
+
+def step_workspace(unit, workspace, spaces, apply_):
+    print("\n7. herdr workspace")
+    if not herdr_running():
+        print("   herdr is not running; nothing to close")
+        return
+    result = herdr(["workspace", "list"], quiet=True) or {}
+    root = os.path.realpath(unit.root)
+    found = set(spaces)
+    for space in result.get("workspaces", []):
+        tree = space.get("worktree") or {}
+        path = tree.get("checkout_path")
+        if path and os.path.realpath(path).startswith(root):
+            found.add(space["workspace_id"])
+    if not found:
+        print("   no herdr workspace for this unit")
+        return
+    for space_id in sorted(found):
+        if apply_:
+            herdr(["workspace", "close", space_id])
+            print(f"   closed workspace {space_id}")
+        else:
+            print(f"   would close workspace {space_id}")
+
+
+# --- the command ------------------------------------------------------------
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__,
+                                 formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("name", help="unit name, as it appears on the board")
+    ap.add_argument("--workspace", default=WORKSPACE)
+    ap.add_argument("--owner", default=OWNER)
+    ap.add_argument("--apply", action="store_true",
+                    help="really settle the unit; without it nothing changes")
+    ap.add_argument("--dry-run", action="store_true",
+                    help="report only (the default)")
+    ap.add_argument("--yes", action="store_true", help="do not ask before applying")
+    ap.add_argument("--force-bucket", action="store_true",
+                    help="settle a unit that is not in the SETTLE bucket")
+    ap.add_argument("--allow-open-pr", action="store_true",
+                    help="settle even though a pull request is still open")
+    ap.add_argument("--board", metavar="FILE",
+                    help="read the board from this JSON file instead of running it")
+    args = ap.parse_args()
+
+    if args.apply and args.dry_run:
+        sys.exit("--apply and --dry-run contradict each other")
+
+    units = derive_units(args.workspace)
+    unit = next((u for u in units if u.name == args.name), None)
+    if not unit:
+        children = sorted(u.name for u in units if u.name.startswith(args.name + "/"))
+        if children:
+            sys.exit(f"{args.name} holds sub-units, not checkouts of its own. "
+                     f"Settle each one:\n"
+                     + "\n".join(f"  workctl done {c}" for c in children))
+        sys.exit(f"no unit named {args.name} under {work_dir(args.workspace)}")
+
+    print(f"{unit.name}: {unit.root}")
+    print(f"mode: {'APPLY' if args.apply else 'DRY RUN, pass --apply to settle'}")
+
+    rows = board_rows(args.board, args.workspace)
+    row = next((r for r in rows if r["name"] == unit.name), None) if rows else None
+    if row is None:
+        found = "the board could not be read" if rows is None else "it is not on the board"
+        if not args.force_bucket:
+            sys.exit(f"refusing to settle {unit.name}: {found}. "
+                     f"Pass --force-bucket to settle it anyway.")
+        print(f"bucket: unknown, {found} (--force-bucket)")
+    elif row["bucket"] != "SETTLE":
+        if not args.force_bucket:
+            sys.exit(f"refusing to settle {unit.name}: it is in the "
+                     f"{row['bucket']} bucket, not SETTLE. "
+                     f"Pass --force-bucket to settle it anyway.")
+        print(f"bucket: {row['bucket']}, not SETTLE (--force-bucket)")
+    else:
+        print("bucket: SETTLE")
+
+    if step_working_tree(unit, args.apply):
+        return 1
+
+    facts = step_branches(unit, row, args.owner)
+    step_merged(facts)
+
+    # A separate gate from --force-bucket. Settling behind an open pull request
+    # takes the branch off disk while a reviewer is still reading it.
+    still_open = [p for f in facts for p in f.get("open") or []]
+    if still_open and not args.allow_open_pr:
+        print("\nstopped at step 3. A pull request is still open: "
+              + " ".join(f"#{p['number']}" for p in still_open)
+              + "\nPass --allow-open-pr to settle anyway.", file=sys.stderr)
+        return 1
+
+    if args.apply and not args.yes:
+        if not sys.stdin.isatty():
+            print("\nrefusing to apply without a terminal; pass --yes", file=sys.stderr)
+            return 1
+        if not confirm(f"\nsettle {unit.name}: archive its notes and remove "
+                       f"{len(unit.checkouts)} checkouts?"):
+            print("stopped; nothing was changed")
+            return 1
+
+    records, spaces = step_agents(unit, args.workspace, args.apply)
+    if not step_archive(unit, args.workspace, records, args.apply):
+        return 1
+    if not step_remove(unit, args.workspace, args.apply):
+        return 1
+    step_workspace(unit, args.workspace, spaces, args.apply)
+
+    print(f"\n{unit.name}: {'settled' if args.apply else 'dry run complete'}")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

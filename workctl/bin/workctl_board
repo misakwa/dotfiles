@@ -33,6 +33,7 @@ def inspect(unit, git, prs, agents):
     return dict(name=unit.name, root=unit.root, age=unit.age_days, prs=found,
                 failures=[], dirty=dirty, ahead=ahead, integrated=integrated,
                 n_checkouts=len(unit.checkouts), n_known=len(trees),
+                stray=len(unit.checkouts) - len(trees),
                 agents=[{"name": a.get("name"), "kind": a.get("agent"),
                          "status": a.get("agent_status"),
                          "pane": a.get("pane_id")} for a in live])
@@ -71,6 +72,10 @@ def render(unit):
     bits = [prs] if prs else []
     if unit["failures"]:
         bits.append("FAIL=" + ",".join(unit["failures"]))
+    # A checkout from a repository outside the workspace: the unit's state is
+    # only partly known, so say so rather than rank it as if it were complete.
+    if unit["stray"]:
+        bits.append(f"?{unit['stray']}/{unit['n_checkouts']} outside workspace")
     for agent in unit["agents"]:
         bits.append(f"[{agent['kind'] or 'agent'}:{agent['status']}]")
     return f"  {unit['age']:>4}d  {unit['name']:<52} {' '.join(bits)}".rstrip()

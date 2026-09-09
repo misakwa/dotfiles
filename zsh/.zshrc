@@ -36,3 +36,5 @@ unset file
 # Paperspace
 export PAPERSPACE_INSTALL="/home/michael/.paperspace"
 export PATH="$PAPERSPACE_INSTALL/bin:$PATH"
+
+if command -v wt >/dev/null 2>&1; then eval "$(command wt config shell init zsh)"; fi

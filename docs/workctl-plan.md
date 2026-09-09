@@ -35,7 +35,8 @@ under Terms. The two words do different jobs and should not be merged.
 I scanned the workspace on 2026-09-09. These are the real numbers.
 
 - 77 units under `work/`.
-- 95 checkouts across 3 bare repositories.
+- 95 checkouts across 3 bare repositories. Two more, in one unit, come from a
+  repository outside the workspace. See "One unit does not fit the layout".
 - 18 open pull requests. Four are approved and unmerged. Three date from 2025.
 - Eight units hold more than one checkout. One holds three.
 - 18 units are already merged into the default branch but still on disk.
@@ -70,6 +71,28 @@ shows eight broken pull requests when the truth is two:
 individual check names rather than the aggregate. The right long-term fix is to
 remove or repair `transcript-check` on the repository. Until that happens, the
 ignore list carries it.
+
+## One unit does not fit the layout
+
+`workctl show ti-agent-developer` turned this up. That unit holds three
+checkouts. One belongs to `provisioning`, inside the workspace. The other two
+come from `vectara/ti-provisioning`, an ordinary clone at
+`~/Projects/ti-provisioning` with no `.bare` directory, whose worktrees reach
+into `vectara-bare/work/ti-agent-developer/`.
+
+You made that arrangement in a rush and do not want to keep it. So `workctl`
+does not model it. Repositories are found by scanning the workspace for
+`.bare`, and that stays the rule.
+
+What `workctl` does instead is refuse to hide it. A checkout that belongs to no
+repository in the workspace is counted and shown, so the unit reads as
+suspicious rather than quietly wrong. A unit where every checkout is unaccounted
+for lands in the `UNKNOWN` bucket. Today that costs 2 checkouts in 1 unit.
+
+Fix the unit rather than the tool. Either clone `ti-provisioning` into the
+workspace as a bare repository beside the other three, or move those two
+worktrees out of `work/`. Until then, treat `ti-agent-developer` as reported on
+one of its three checkouts.
 
 ## The core idea
 
