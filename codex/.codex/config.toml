@@ -7,10 +7,13 @@ personality = "none"
 web_search = "cached"
 
 [features]
+hooks = true
+goals = true
+multi-agent = true
 apps = true
 shell_snapshot = true
 undo = true
-memories = true
+memories = false
 
 [projects."/Users/michael/.dotfiles"]
 trust_level = "trusted"
@@ -18,5 +21,56 @@ trust_level = "trusted"
 [projects."/Users/michael/Projects/llms"]
 trust_level = "trusted"
 
+[projects."/home/michael/Projects/vectara-bare/packaged-agentic-setup"]
+trust_level = "trusted"
+
+[projects."/home/michael/Projects/vectara-bare/provisioning"]
+trust_level = "trusted"
+
+[projects."/home/michael/Projects/vectara-bare/work/sandisk-deploy-sept-1"]
+trust_level = "trusted"
+
+[projects."/home/michael/Projects/vectara-bare/work/ti-INC-351"]
+trust_level = "trusted"
+
+[projects."/home/michael/.config/orca/rate-limit-pty-cwd"]
+trust_level = "trusted"
+
 [tui.model_availability_nux]
 "gpt-5.5" = 2
+
+[hooks.state]
+
+[hooks.state."/home/michael/.codex/hooks.json:session_start:0:0"]
+trusted_hash = "sha256:b1cea636db8e008b9ed1b33c60b217a3f91dd81ed35625cc177ff1db9c700ea2"
+
+[hooks.state."/home/michael/.codex/hooks.json:user_prompt_submit:0:0"]
+trusted_hash = "sha256:3cabac7c2842ce74bcac3c060571fdba91e3c9b5f68bdccc12a94e2eeb2e1c7d"
+
+[hooks.state."/home/michael/.codex/hooks.json:stop:0:0"]
+trusted_hash = "sha256:ffc50386d3808b85b431d8d5076adfccf5d7e2c3a6b352e938ddd4db5536b7a0"
+
+[hooks.state."/home/michael/.codex/hooks.json:pre_tool_use:0:0"]
+trusted_hash = "sha256:6357fadd5554ad6591a4ea0351ac49ed5dfd19066f4727af499a067e9675a77d"
+
+[hooks.state."/home/michael/.codex/hooks.json:permission_request:0:0"]
+trusted_hash = "sha256:f62eda616094c7c0ad73ea31e8968ae354bdb6312d35f663cce9ca310129e22b"
+
+[hooks.state."/home/michael/.codex/hooks.json:post_tool_use:0:0"]
+trusted_hash = "sha256:66f2af4619c0141e6ad35414a1f8fdd431a76293a6be180e7354a927ce368b6b"
+
+[hooks.state."/home/michael/.codex/hooks.json:session_start:1:0"]
+trusted_hash = "sha256:6a395b4ec256b48a779735718063dfa6ba585a2a175e37fa2593f914cc7ae9e1"
+
+[hooks.state."/home/michael/.codex/hooks.json:user_prompt_submit:1:0"]
+trusted_hash = "sha256:6ee03c5abf46fcfb847f46e9bfc8d16ed7c70e093c5fdc10d318f2a4e9e392fa"
+
+[hooks.state."/home/michael/.codex/hooks.json:subagent_start:0:0"]
+trusted_hash = "sha256:1d58802f83a5c4d241b30f3c7590f4e47d8aa8c8d8710e2e6e36a572825f8f3a"
+
+[hooks.state."/home/michael/.codex/hooks.json:subagent_stop:0:0"]
+trusted_hash = "sha256:5a8adb09cf89671412ff38f8a34b17d22bfe2476626e9e1bfdd8997bcfde7000"
+
+[hooks.state."/home/michael/.codex/hooks.json:stop:1:0"]
+trusted_hash = "sha256:04bc2bd9453581dcf6c34daba0309d0cd10d2a7df0d78391458c13dbc483778b"
+
