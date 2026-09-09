@@ -164,8 +164,9 @@ Two join keys. Map a checkout to its git facts by the real path. Map a checkout
 to its pull request by the pair of repository name and branch name. Map an
 agent to a unit by the longest path prefix of the pane `cwd`.
 
-Never key a checkout by its repository name alone. A unit may hold two
-worktrees of the same repository, as `ti-agent-developer` does.
+Never key a checkout by its repository name alone. Nothing stops a unit from
+holding two worktrees of one repository, and the path is the only field
+guaranteed to be unique.
 
 A whole pass costs about 9 seconds. Cache the worktrunk and `gh` results for 5
 minutes. Never cache the herdr snapshot.
@@ -194,10 +195,11 @@ Rules 1, 2, and 3 all apply to the same directory. A unit can be a checkout at
 its root, hold sibling checkouts, and hold sub-units, all at once. No unit does
 all three today, but the rule must allow it.
 
-Two checkouts in one unit may also come from the same repository. Example:
-`work/ti-agent-developer` holds three checkouts, two of which are separate
-worktrees of `provisioning`. Key each checkout by its path, never by its
-repository name.
+Key each checkout by its path, never by its repository name. Two checkouts in
+one unit may come from the same repository, and a directory name is not the
+repository name: `work/ti-agent-developer/ti-provisioning-vectara-dev` is a
+worktree of `ti-provisioning`, not of a repository called
+`ti-provisioning-vectara-dev`.
 
 Every other file in the unit directory is the unit's unversioned payload.
 Treat Markdown files, scripts, screenshots, and logs as part of the unit.
@@ -613,8 +615,8 @@ a single repository checkout.
 
 Your unit is the opposite shape. `work/<name>/` is one workspace holding
 several checkouts plus unversioned notes. Eight of your units span more than
-one repository, and `ti-agent-developer` holds three checkouts, two of them
-from the same repository. Your own `bare-repo-worktrees` skill says to `cd
+one repository, and `ti-agent-developer` holds three checkouts across two of
+them. Your own `bare-repo-worktrees` skill says to `cd
 work/<name>` and start one session that sees each repository as a subdirectory.
 The plugin would give you one workspace per repository instead of one per unit.
 

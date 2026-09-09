@@ -32,6 +32,11 @@ def board_rows(workspace):
         return None
 
 
+def count(row):
+    n = row["n_checkouts"]
+    return f"{n} checkout" + ("" if n == 1 else "s")
+
+
 def ask(question):
     if not sys.stdin.isatty():
         return "n"
@@ -86,7 +91,7 @@ def main():
     print(f"{len(group)} units in {wanted}")
     print(f"mode: {'APPLY' if args.apply else 'DRY RUN, pass --apply to settle'}\n")
     for row in group:
-        print(f"  {row['age']:>4}d  {row['name']:<52} {row['n_checkouts']} checkouts")
+        print(f"  {row['age']:>4}d  {row['name']:<52} {count(row)}")
     if not group:
         return 0
 
@@ -103,7 +108,7 @@ def main():
             name = row["name"]
             print(f"\n{'=' * 70}")
             if not args.yes:
-                answer = ask(f"settle {name} ({row['n_checkouts']} checkouts)?")
+                answer = ask(f"settle {name} ({count(row)})?")
                 if answer == "q":
                     print("stopped")
                     break
