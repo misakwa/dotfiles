@@ -288,7 +288,9 @@ def herdr(args, quiet=False):
     try:
         return json.loads(out.stdout).get("result")
     except json.JSONDecodeError:
-        return None
+        # Some commands succeed with no body at all, such as report-metadata.
+        # Only a non-zero exit means failure, so do not report None here.
+        return {}
 
 
 def agents_by_unit(units):
