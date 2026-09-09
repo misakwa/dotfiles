@@ -1,0 +1,21 @@
+# Keys I author in ~/.claude/settings.json. Everything else Claude Code writes
+# for itself (autoMode, enabledPlugins, extraKnownMarketplaces, and the hooks
+# that herdr installs) stays out of git.
+$schema
+env
+includeCoAuthoredBy
+permissions
+skillOverrides
+outputStyle
+alwaysThinkingEnabled
+effortLevel
+showClearContextOnPlanAccept
+tui
+showThinkingSummaries
+skipDangerousModePermissionPrompt
+verbose
+skipAutoPermissionPrompt
+enableCodeSimplifier
+telemetry
+verboseThinking
+disableRemoteControl

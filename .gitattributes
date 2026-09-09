@@ -1,0 +1,7 @@
+# Claude Code and Codex write their own state into the files they read. These
+# filters keep that state in the working file and out of every commit. The
+# manifests in scripts/owned-keys/ list the keys I actually author. Run
+# `make git-filters` once per clone to register them.
+claude/.claude/settings.json    filter=owned-claude-settings
+codex/.codex/config.toml        filter=owned-codex-config
+codex/.codex/local.config.toml  filter=owned-codex-local-config

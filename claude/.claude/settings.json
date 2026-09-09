@@ -1,16 +1,22 @@
 {
   "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "alwaysThinkingEnabled": true,
+  "disableRemoteControl": true,
+  "effortLevel": "high",
+  "enableCodeSimplifier": true,
   "env": {
-    "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "1",
+    "CLAUDE_CODE_DISABLE_AUTO_MEMORY": "1",
     "CLAUDE_CODE_DISABLE_MOUSE_CLICKS": "1",
-    "CLAUDE_CODE_DISABLE_AUTO_MEMORY": "1"
+    "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "1"
   },
   "includeCoAuthoredBy": false,
+  "outputStyle": "asd-ste-100",
   "permissions": {
     "defaultMode": "auto"
   },
+  "showClearContextOnPlanAccept": true,
+  "showThinkingSummaries": true,
   "skillOverrides": {
-    "omc-reference": "off",
     "cmux-architecture": "off",
     "cmux-backend": "off",
     "cmux-billing": "off",
@@ -21,24 +27,15 @@
     "cmux-release": "off",
     "cmux-shared-behavior": "off",
     "cmux-socket-policy": "off",
-    "cmux-testing": "off"
+    "cmux-testing": "off",
+    "omc-reference": "off"
   },
-  "hooks": {},
-  "enabledPlugins": {},
-  "extraKnownMarketplaces": {},
-  "outputStyle": "asd-ste-100",
-  "alwaysThinkingEnabled": true,
-  "effortLevel": "high",
-  "showClearContextOnPlanAccept": true,
-  "tui": "fullscreen",
-  "showThinkingSummaries": true,
-  "skipDangerousModePermissionPrompt": true,
-  "verbose": true,
   "skipAutoPermissionPrompt": true,
-  "verboseThinking": true,
-  "enableCodeSimplifier": true,
+  "skipDangerousModePermissionPrompt": true,
   "telemetry": {
     "enabled": false
   },
-  "disableRemoteControl": true
+  "tui": "fullscreen",
+  "verbose": true,
+  "verboseThinking": true
 }

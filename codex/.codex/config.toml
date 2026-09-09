@@ -7,16 +7,8 @@ personality = "none"
 web_search = "cached"
 
 [features]
+hooks = true
 apps = true
 shell_snapshot = true
 undo = true
 memories = true
-
-[projects."/Users/michael/.dotfiles"]
-trust_level = "trusted"
-
-[projects."/Users/michael/Projects/llms"]
-trust_level = "trusted"
-
-[tui.model_availability_nux]
-"gpt-5.5" = 2
