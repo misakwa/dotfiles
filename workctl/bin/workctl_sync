@@ -191,6 +191,9 @@ def once(args, ttl_ms):
         if report(wid, pr, ci, ttl_ms, args.dry_run):
             sent += 1
     print(f"\n{sent}/{len(matched)} workspaces updated")
+    # A --interval run is usually redirected to a log, where block buffering
+    # would hide every pass until the loop is killed and the buffer is lost.
+    sys.stdout.flush()
     return 0
 
 
@@ -231,7 +234,7 @@ def main():
     if not os.path.isdir(os.path.join(args.workspace, "work")):
         sys.exit(f"no work/ directory under {args.workspace}")
 
-    if not args.dry_run and not herdr_running():
+    if not herdr_running():
         print("herdr is not running; nothing to sync")
         return 0
 
@@ -246,7 +249,7 @@ def main():
             time.sleep(args.interval)
         except KeyboardInterrupt:
             return 0
-        if not args.dry_run and not herdr_running():
+        if not herdr_running():
             print("herdr stopped; leaving the sync loop")
             return 0
 

@@ -115,6 +115,10 @@ def transcript_for(agent, session):
     return hits[0] if hits else ""
 
 
+def inside(path, root):
+    return path == root or path.startswith(root + os.sep)
+
+
 def prune_empty(path, stop):
     """Remove genuinely empty directories upwards, never past `stop`."""
     removed = []
@@ -143,7 +147,7 @@ def confirm(question):
 
 # --- the settle sequence ----------------------------------------------------
 
-def step_working_tree(unit, apply_):
+def step_working_tree(unit):
     print("\n1. uncommitted changes")
     stop = False
     for checkout in unit.checkouts:
@@ -252,35 +256,36 @@ def step_agents(unit, workspace, apply_):
     return records, sorted(set(spaces))
 
 
-def capture_hunk(unit, dest, apply_):
-    """Live Hunk reviews for the unit, written beside SESSIONS.txt."""
-    written = []
+def capture_hunk(unit):
+    """Every live Hunk review for the unit, as (file name, JSON text) pairs."""
+    found = []
     for checkout in unit.checkouts:
         out = subprocess.run(["hunk", "session", "review", "--repo", checkout,
                               "--include-patch", "--include-notes", "--json"],
                              capture_output=True, text=True)
         if out.returncode != 0 or not out.stdout.strip():
             continue
-        name = "HUNK-" + unit.label_for(checkout).replace(os.sep, "-") + ".json"
-        if apply_:
-            with open(os.path.join(dest, name), "w", encoding="utf-8") as handle:
-                handle.write(out.stdout)
-        written.append(name)
-    return written
+        found.append(("HUNK-" + unit.label_for(checkout).replace(os.sep, "-") + ".json",
+                      out.stdout))
+    return found
 
 
 def step_archive(unit, workspace, records, apply_):
     print("\n5. archive")
     entries = payload_entries(unit)
+    reviews = capture_hunk(unit)
     dest = os.path.join(workspace, ".archive", unit.name)
 
-    if not entries and not records:
+    if not entries and not records and not reviews:
         print("   no unversioned payload and no agent session; nothing to archive")
         return True
 
     print(f"   destination {dest}")
     for entry in entries:
         print(f"   {'move' if apply_ else 'would move'} {entry}")
+    for name, _ in reviews:
+        print(f"   {'capture' if apply_ else 'would capture'} the live Hunk "
+              f"review as {name}")
     print(f"   {'write' if apply_ else 'would write'} SESSIONS.txt "
           f"({len(records)} sessions)")
 
@@ -291,15 +296,13 @@ def step_archive(unit, workspace, records, apply_):
         return False
 
     if not apply_:
-        capture = capture_hunk(unit, dest, False)
-        for name in capture:
-            print(f"   would capture live Hunk review as {name}")
         return True
 
     try:
         os.makedirs(dest, exist_ok=True)
-        for name in capture_hunk(unit, dest, True):
-            print(f"   captured live Hunk review as {name}")
+        for name, text in reviews:
+            with open(os.path.join(dest, name), "w", encoding="utf-8") as handle:
+                handle.write(text)
         with open(os.path.join(dest, "SESSIONS.txt"), "w", encoding="utf-8") as handle:
             stamp = datetime.datetime.now().astimezone().isoformat(timespec="seconds")
             handle.write(f"# workctl done {unit.name} on {stamp}\n")
@@ -358,14 +361,24 @@ def step_workspace(unit, workspace, spaces, apply_):
     if not herdr_running():
         print("   herdr is not running; nothing to close")
         return
-    result = herdr(["workspace", "list"], quiet=True) or {}
     root = os.path.realpath(unit.root)
     found = set(spaces)
-    for space in result.get("workspaces", []):
-        tree = space.get("worktree") or {}
-        path = tree.get("checkout_path")
-        if path and os.path.realpath(path).startswith(root):
+
+    panes = (herdr(["pane", "list"], quiet=True) or {}).get("panes", [])
+    for pane in panes:
+        for cwd in (pane.get("cwd"), pane.get("foreground_cwd")):
+            if cwd and inside(os.path.realpath(cwd), root):
+                found.add(pane["workspace_id"])
+
+    for space in (herdr(["workspace", "list"], quiet=True) or {}).get("workspaces", []):
+        path = (space.get("worktree") or {}).get("checkout_path")
+        if path and inside(os.path.realpath(path), root):
             found.add(space["workspace_id"])
+        # herdr reports no cwd of its own for a workspace, so the label
+        # `workctl new` wrote is the last thing left to match on.
+        elif space.get("label") == unit.name:
+            found.add(space["workspace_id"])
+
     if not found:
         print("   no herdr workspace for this unit")
         return
@@ -431,7 +444,7 @@ def main():
     else:
         print("bucket: SETTLE")
 
-    if step_working_tree(unit, args.apply):
+    if step_working_tree(unit):
         return 1
 
     facts = step_branches(unit, row, args.owner)
@@ -450,8 +463,9 @@ def main():
         if not sys.stdin.isatty():
             print("\nrefusing to apply without a terminal; pass --yes", file=sys.stderr)
             return 1
+        n = len(unit.checkouts)
         if not confirm(f"\nsettle {unit.name}: archive its notes and remove "
-                       f"{len(unit.checkouts)} checkouts?"):
+                       f"{n} checkout" + ("" if n == 1 else "s") + "?"):
             print("stopped; nothing was changed")
             return 1
 

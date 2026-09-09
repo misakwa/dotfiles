@@ -234,13 +234,52 @@ def failing_checks(pairs, owner=None, ignored=None):
 
 # --- herdr -----------------------------------------------------------------
 
+_SESSION = None
+
+
+def herdr_session():
+    """The name of the herdr session to talk to, or None when none runs.
+
+    Herdr supports named sessions, and the default one is often not the live
+    one: `herdr status server` reports "not running" while a named session is
+    serving every real pane. Resolve the session once, then pass it explicitly.
+    """
+    global _SESSION
+    if _SESSION is not None:
+        return _SESSION or None
+
+    if os.environ.get("WORKCTL_HERDR_SESSION"):
+        _SESSION = os.environ["WORKCTL_HERDR_SESSION"]
+        return _SESSION
+
+    text = run(["herdr", "session", "list", "--json"], allow_failure=True)
+    try:
+        sessions = json.loads(text)["sessions"] if text else []
+    except (json.JSONDecodeError, KeyError):
+        sessions = []
+    running = [s for s in sessions if s.get("running")]
+
+    # Inside a herdr pane, follow the session that owns this pane.
+    socket = os.environ.get("HERDR_SOCKET_PATH")
+    chosen = next((s for s in running if s.get("socket_path") == socket), None) if socket else None
+    if chosen is None:
+        chosen = next((s for s in running if s.get("default")), None)
+    if chosen is None and running:
+        chosen = running[0]
+
+    _SESSION = chosen["name"] if chosen else ""
+    return _SESSION or None
+
+
 def herdr_running():
-    return "status: running" in run(["herdr", "status", "server"], allow_failure=True)
+    return herdr_session() is not None
 
 
 def herdr(args, quiet=False):
-    """Run a herdr command and return its `result`, or None."""
-    out = subprocess.run(["herdr"] + args, capture_output=True, text=True)
+    """Run a herdr command against the live session and return its `result`."""
+    session = herdr_session()
+    prefix = ["--session", session] if session else []
+    out = subprocess.run(["herdr"] + prefix + args, capture_output=True, text=True)
     if out.returncode != 0:
         if not quiet:
             import sys
