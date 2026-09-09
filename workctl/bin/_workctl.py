@@ -282,6 +282,39 @@ def failing_checks(pairs, owner=None, ignored=None):
     return dict(parallel(load, pairs))
 
 
+UNRESOLVED_QUERY = """
+query($owner: String!, $repo: String!, $number: Int!) {
+  repository(owner: $owner, name: $repo) {
+    pullRequest(number: $number) {
+      reviewThreads(first: 100) { nodes { isResolved comments(first: 1) { totalCount } } }
+    }
+  }
+}
+"""
+
+
+def unresolved_threads(pairs, owner=None):
+    """Map (repo, number) to its count of unresolved review threads.
+
+    An approved pull request can still carry an unanswered question. Merging it
+    then drops that feedback silently, so the board needs to see it.
+    """
+    who = owner or OWNER
+
+    def load(key):
+        repo, number = key
+        text = run(["gh", "api", "graphql", "-f", f"query={UNRESOLVED_QUERY}",
+                    "-F", f"owner={who}", "-F", f"repo={repo}", "-F", f"number={number}"])
+        try:
+            nodes = json.loads(text)["data"]["repository"]["pullRequest"]["reviewThreads"]["nodes"]
+        except (KeyError, TypeError, ValueError):
+            return key, 0
+        return key, sum(1 for t in nodes
+                        if not t["isResolved"] and t["comments"]["totalCount"])
+
+    return dict(parallel(load, pairs))
+
+
 # --- herdr -----------------------------------------------------------------
 
 _SESSION = None

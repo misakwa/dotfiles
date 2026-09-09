@@ -11,7 +11,8 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
 from _workctl import (WORKSPACE, IGNORED_CHECKS, agents_by_unit, bare_repos,
-                      derive_units, failing_checks, git_facts, is_dirty, pr_facts)
+                      derive_units, failing_checks, git_facts, is_dirty, pr_facts,
+                      unresolved_threads)
 
 BUCKETS = ["BLOCKED", "READY", "MERGEABLE", "BROKEN", "WAITING", "ACTIVE",
            "SETTLE", "COLD", "NOTES", "UNKNOWN"]
@@ -33,7 +34,7 @@ def inspect(unit, git, prs, agents):
     return dict(name=unit.name, root=unit.root, age=unit.age_days, prs=found,
                 failures=[], dirty=dirty, ahead=ahead, integrated=integrated,
                 n_checkouts=len(unit.checkouts), n_known=len(trees),
-                stray=len(unit.checkouts) - len(trees),
+                stray=len(unit.checkouts) - len(trees), threads=0,
                 agents=[{"name": a.get("name"), "kind": a.get("agent"),
                          "status": a.get("agent_status"),
                          "pane": a.get("pane_id")} for a in live])
@@ -76,6 +77,8 @@ def render(unit):
     # only partly known, so say so rather than rank it as if it were complete.
     if unit["stray"]:
         bits.append(f"?{unit['stray']}/{unit['n_checkouts']} outside workspace")
+    if unit["threads"]:
+        bits.append(f"{unit['threads']} unanswered")
     for agent in unit["agents"]:
         bits.append(f"[{agent['kind'] or 'agent'}:{agent['status']}]")
     return f"  {unit['age']:>4}d  {unit['name']:<52} {' '.join(bits)}".rstrip()
@@ -108,6 +111,15 @@ def main():
         row["failures"] = sorted({n for repo, pr in row["prs"]
                                   for n in checks.get((repo, pr["number"]), [])})
         row["bucket"] = bucket(row)
+
+    # Only the approved ones. An unanswered question matters most where the
+    # board is about to tell you to merge, and each lookup costs a request.
+    ready = [(repo, pr["number"]) for r in rows if r["bucket"] == "MERGEABLE"
+             for repo, pr in r["prs"]]
+    threads = unresolved_threads(ready) if ready else {}
+    for row in rows:
+        row["threads"] = sum(threads.get((repo, pr["number"]), 0)
+                             for repo, pr in row["prs"])
 
     if args.json:
         json.dump(rows, sys.stdout, indent=1)

@@ -1,3 +1,4 @@
+# vim: set ft=python
 #!/usr/bin/env -S uv run --script
 # /// script
 # requires-python = ">=3.11"
@@ -9,6 +10,7 @@ Reads only. It never posts a comment, resolves a thread, approves, merges, or
 closes anything. --draft writes its suggested replies to standard output for
 you to edit and post yourself.
 """
+
 import argparse
 import json
 import os
@@ -17,8 +19,7 @@ import sys
 import textwrap
 
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
-from _workctl import (WORKSPACE, IGNORED_CHECKS, failing_checks, find_unit,
-                      parallel, run)
+from _workctl import WORKSPACE, IGNORED_CHECKS, failing_checks, find_unit, parallel, run
 
 PR_FIELDS = "number,title,url,reviewDecision,isDraft,headRefName"
 
@@ -51,8 +52,9 @@ query($owner: String!, $repo: String!, $number: Int!) {
 }
 """
 
-WRAP = textwrap.TextWrapper(width=78, initial_indent="      ",
-                            subsequent_indent="      ")
+WRAP = textwrap.TextWrapper(
+    width=78, initial_indent="      ", subsequent_indent="      "
+)
 
 
 def checkout_remotes(checkouts):
@@ -61,8 +63,11 @@ def checkout_remotes(checkouts):
     `wt list` answers the same question, but it walks every checkout in the
     whole workspace and costs about 13 seconds; this costs milliseconds.
     """
+
     def resolve(checkout):
-        branch = run(["git", "-C", checkout, "rev-parse", "--abbrev-ref", "HEAD"]).strip()
+        branch = run(
+            ["git", "-C", checkout, "rev-parse", "--abbrev-ref", "HEAD"]
+        ).strip()
         url = run(["git", "-C", checkout, "remote", "get-url", "origin"]).strip()
         match = REMOTE_URL.search(url)
         if not match or branch in ("", "HEAD"):
@@ -82,19 +87,50 @@ def unit_prs(unit, owner_override):
 
     def load(key):
         owner, repo, branch = key
-        text = run(["gh", "pr", "list", "--repo", f"{owner}/{repo}", "--state", "open",
-                    "--head", branch, "--json", PR_FIELDS])
+        text = run(
+            [
+                "gh",
+                "pr",
+                "list",
+                "--repo",
+                f"{owner}/{repo}",
+                "--state",
+                "open",
+                "--head",
+                branch,
+                "--json",
+                PR_FIELDS,
+            ]
+        )
         return [(owner, repo, branch, pr) for pr in (json.loads(text) if text else [])]
 
-    keys = sorted({(owner_override or owner, repo, branch)
-                   for value in remotes.values() if value
-                   for owner, repo, branch in [value]})
+    keys = sorted(
+        {
+            (owner_override or owner, repo, branch)
+            for value in remotes.values()
+            if value
+            for owner, repo, branch in [value]
+        }
+    )
     return [row for batch in parallel(load, keys) for row in batch]
 
 
 def review_threads(repo, number, owner, include_resolved):
-    text = run(["gh", "api", "graphql", "-f", f"query={THREADS_QUERY}",
-                "-F", f"owner={owner}", "-F", f"repo={repo}", "-F", f"number={number}"])
+    text = run(
+        [
+            "gh",
+            "api",
+            "graphql",
+            "-f",
+            f"query={THREADS_QUERY}",
+            "-F",
+            f"owner={owner}",
+            "-F",
+            f"repo={repo}",
+            "-F",
+            f"number={number}",
+        ]
+    )
     if not text:
         return None
     try:
@@ -122,16 +158,42 @@ def draft_reply(thread):
     if lower.startswith(("nit", "minor", "style")):
         return "Taken, thank you. <Say whether you changed it, or why you kept it.>"
     if "?" in body:
-        return ("<Answer the question directly.> "
-                "<Then say what, if anything, changed in the code.>")
-    if any(cue in lower for cue in ("should", "could", "instead", "prefer",
-                                   "consider", "why not", "rather than")):
-        return ("Good point. <Agree and describe the change, or explain the "
-                "constraint that rules it out.>")
-    if any(cue in lower for cue in ("wrong", "broken", "bug", "does not",
-                                    "doesn't", "not right", "incorrect")):
-        return ("<Confirm or correct the diagnosis.> "
-                "<Then name the fix and the commit that carries it.>")
+        return (
+            "<Answer the question directly.> "
+            "<Then say what, if anything, changed in the code.>"
+        )
+    if any(
+        cue in lower
+        for cue in (
+            "should",
+            "could",
+            "instead",
+            "prefer",
+            "consider",
+            "why not",
+            "rather than",
+        )
+    ):
+        return (
+            "Good point. <Agree and describe the change, or explain the "
+            "constraint that rules it out.>"
+        )
+    if any(
+        cue in lower
+        for cue in (
+            "wrong",
+            "broken",
+            "bug",
+            "does not",
+            "doesn't",
+            "not right",
+            "incorrect",
+        )
+    ):
+        return (
+            "<Confirm or correct the diagnosis.> "
+            "<Then name the fix and the commit that carries it.>"
+        )
     return "<Answer the comment, then say what changed in the code.>"
 
 
@@ -160,19 +222,33 @@ def show_threads(threads, draft):
 
 
 def main():
-    ap = argparse.ArgumentParser(description=__doc__,
-                                 formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     ap.add_argument("name", help="unit name, as it appears under work/")
     ap.add_argument("--workspace", default=WORKSPACE)
     ap.add_argument("--owner", help="override the owner read from the git remote")
-    ap.add_argument("--threads", action="store_true",
-                    help="fetch the unresolved review threads and their comments")
-    ap.add_argument("--all-threads", action="store_true",
-                    help="include the resolved and outdated threads")
-    ap.add_argument("--draft", action="store_true",
-                    help="print a suggested reply per thread; implies --threads")
-    ap.add_argument("--ignore-check", action="append", default=[],
-                    help="check name to treat as noise (repeatable)")
+    ap.add_argument(
+        "--threads",
+        action="store_true",
+        help="fetch the unresolved review threads and their comments",
+    )
+    ap.add_argument(
+        "--all-threads",
+        action="store_true",
+        help="include the resolved and outdated threads",
+    )
+    ap.add_argument(
+        "--draft",
+        action="store_true",
+        help="print a suggested reply per thread; implies --threads",
+    )
+    ap.add_argument(
+        "--ignore-check",
+        action="append",
+        default=[],
+        help="check name to treat as noise (repeatable)",
+    )
     ap.add_argument("--json", action="store_true")
     args = ap.parse_args()
 
@@ -185,17 +261,33 @@ def main():
     ignored = IGNORED_CHECKS | set(args.ignore_check)
     checks = {}
     for owner in {row[0] for row in prs}:
-        checks.update(failing_checks(
-            {(repo, pr["number"]) for o, repo, _, pr in prs if o == owner},
-            owner=owner, ignored=ignored))
+        checks.update(
+            failing_checks(
+                {(repo, pr["number"]) for o, repo, _, pr in prs if o == owner},
+                owner=owner,
+                ignored=ignored,
+            )
+        )
 
     rows = []
-    for owner, repo, branch, pr in sorted(prs, key=lambda row: (row[1], row[3]["number"])):
-        threads = (review_threads(repo, pr["number"], owner, args.all_threads)
-                   if want_threads else None)
-        rows.append({"owner": owner, "repo": repo, "branch": branch, "pr": pr,
-                     "failures": checks.get((repo, pr["number"]), []),
-                     "threads": threads})
+    for owner, repo, branch, pr in sorted(
+        prs, key=lambda row: (row[1], row[3]["number"])
+    ):
+        threads = (
+            review_threads(repo, pr["number"], owner, args.all_threads)
+            if want_threads
+            else None
+        )
+        rows.append(
+            {
+                "owner": owner,
+                "repo": repo,
+                "branch": branch,
+                "pr": pr,
+                "failures": checks.get((repo, pr["number"]), []),
+                "threads": threads,
+            }
+        )
 
     if args.json:
         json.dump({"unit": unit.name, "prs": rows}, sys.stdout, indent=1)
@@ -203,14 +295,17 @@ def main():
         return 0
 
     if not rows:
-        print(f"{unit.name}: no open pull request "
-              f"({len(unit.checkouts)} checkouts)")
+        print(f"{unit.name}: no open pull request ({len(unit.checkouts)} checkouts)")
         return 0
 
     print(f"{unit.name}\n")
     for row in rows:
         pr = row["pr"]
-        state = "draft" if pr["isDraft"] else (pr.get("reviewDecision") or "pending").lower()
+        state = (
+            "draft"
+            if pr["isDraft"]
+            else (pr.get("reviewDecision") or "pending").lower()
+        )
         print(f"{row['repo']}#{pr['number']}  {state}")
         print(f"  {pr['title']}")
         print(f"  {pr['url']}")
@@ -220,8 +315,9 @@ def main():
             print()
             continue
         if not row["threads"]:
-            print("  review threads: none"
-                  + ("" if args.all_threads else " unresolved"))
+            print(
+                "  review threads: none" + ("" if args.all_threads else " unresolved")
+            )
             print()
             continue
         print()
