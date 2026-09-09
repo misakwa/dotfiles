@@ -23,19 +23,7 @@
     "cmux-socket-policy": "off",
     "cmux-testing": "off"
   },
-  "hooks": {
-    "Stop": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "python3 ~/.agents/hooks/kitty-review.py",
-            "timeout": 30
-          }
-        ]
-      }
-    ]
-  },
+  "hooks": {},
   "enabledPlugins": {},
   "extraKnownMarketplaces": {},
   "outputStyle": "asd-ste-100",
