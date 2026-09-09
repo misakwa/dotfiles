@@ -242,6 +242,8 @@ Keep the surface small. Nine commands cover the day.
 ### Reading
 
 - `workctl` prints the board, grouped by bucket, newest first inside each group.
+- `workctl sessions [<name>]` lists the Claude, Codex, and Pi sessions recorded
+  inside your units. See "Finding the agent history".
 - `workctl show <name>` prints one unit in full: every checkout, its branch, its
   pull request, its CI, its live agents, its note files, and its age.
 - `workctl board --watch` prints the same board and refreshes it. This is the view
@@ -678,6 +680,54 @@ height = "60%"
 
 Check native first. This is worktrunk's own feature, and it does not add a
 second way to create a worktree.
+
+## Finding the agent history
+
+Each agent files its history under the directory it ran in, and each does it
+differently:
+
+| Agent | Where | Keyed by |
+|---|---|---|
+| Claude | `~/.claude/projects/<slug>/*.jsonl` | the directory path, with separators flattened to hyphens |
+| Codex | `~/.codex/sessions/<YYYY>/<MM>/<DD>/rollout-*.jsonl` | the date. The path is inside the file, as `session_meta.payload.cwd` |
+| Pi | `~/.pi/agent/sessions/-<slug>-/*.jsonl` | the same flattened path, wrapped in hyphens |
+
+This matters because Claude started at a unit root shows only the sessions
+recorded for that exact path. Work done one level down, inside a checkout, is
+invisible. `workctl sessions` finds those and can move them up:
+
+```bash
+workctl sessions                          # every unit
+workctl sessions INC-355
+workctl sessions --below-root             # only what a run at the root would miss
+workctl sessions INC-355 --move-to-root   # dry run
+workctl sessions INC-355 --move-to-root --apply
+workctl sessions --orphans
+```
+
+It scans the unit root and two levels below it, which covers both
+`work/<name>/<repo>` and `work/<name>/<sub>/<repo>`.
+
+Three things learned building it.
+
+**You already do the right thing.** Across 29 sessions in 12 units, none sits
+below a unit root. You start Claude at `work/<name>/` every time. The command
+is therefore a safety net rather than a daily tool.
+
+**Moving a Claude session does not rewrite it.** About three quarters of the
+records in a session carry the `cwd` they were written in. The move refiles the
+file and leaves those alone. They are history, not a pointer, so the session
+still resumes; it simply remembers where it ran.
+
+**Codex cannot be moved.** It files by date, not by directory, so there is
+nothing to refile. `--move-to-root` says so and skips it.
+
+**Settling a unit strands its history.** Five units are already gone from disk
+while their sessions remain: `data-rebuild-only-os`, `kafka-memory-retention`,
+`milvus-querynode-strategy`, `oncaller-failures`, and `ti-INC-351`.
+`--orphans` lists them. This is the gap step 5 of the settle sequence exists to
+close, by recording the session identifiers in the archive before the directory
+goes away.
 
 ## The settle sequence
 
