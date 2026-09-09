@@ -3,164 +3,47 @@
 # requires-python = ">=3.11"
 # dependencies = []
 # ///
-"""Rank every unit of work by how much it needs you.
-
-Derives units from the folder structure, takes the git facts from worktrunk,
-and takes the pull request facts from the GitHub CLI. It does not read herdr
-yet, so the BLOCKED, READY, and ACTIVE buckets are absent.
-"""
+"""Rank every unit of work by how much it needs you."""
 import argparse
-import concurrent.futures as futures
 import json
 import os
-import subprocess
 import sys
-import time
 
-BUCKETS = ["MERGEABLE", "BROKEN", "WAITING", "ACTIVE",
+sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
+from _workctl import (WORKSPACE, IGNORED_CHECKS, agents_by_unit, bare_repos,
+                      derive_units, failing_checks, git_facts, is_dirty, pr_facts)
+
+BUCKETS = ["BLOCKED", "READY", "MERGEABLE", "BROKEN", "WAITING", "ACTIVE",
            "SETTLE", "COLD", "NOTES", "UNKNOWN"]
 
-DIRTY_KEYS = ("staged", "modified", "untracked", "deleted", "conflicted")
 
-# Checks that fail permanently and say nothing about the branch. One always-red
-# check would otherwise turn every pull request in the repository red.
-IGNORED_CHECKS = {"transcript-check"}
-
-
-def run(cmd, cwd=None, allow_failure=False):
-    out = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True)
-    # `gh pr checks` exits non-zero when a check failed, which is the case this
-    # tool cares about most.
-    return out.stdout if allow_failure or out.returncode == 0 else ""
-
-
-def is_checkout(path):
-    return os.path.isfile(os.path.join(path, ".git"))
-
-
-def subdirs(path):
-    try:
-        return sorted(d for d in os.listdir(path) if os.path.isdir(os.path.join(path, d)))
-    except OSError:
-        return []
-
-
-def derive_units(work_dir):
-    """Apply the derivation rules to every directory under work/.
-
-    A unit may be a checkout at its own root, may hold several checkouts as
-    children, and may hold sub-units one level deeper. All three can coexist.
-    """
-    units = []
-    for name in subdirs(work_dir):
-        root = os.path.join(work_dir, name)
-        checkouts = [root] if is_checkout(root) else []
-        nested = []
-        for child_name in subdirs(root):
-            child = os.path.join(root, child_name)
-            if is_checkout(child):
-                checkouts.append(child)
-                continue
-            deep = [os.path.join(child, g) for g in subdirs(child)
-                    if is_checkout(os.path.join(child, g))]
-            if deep:
-                nested.append((f"{name}/{child_name}", child, deep))
-        if checkouts or not nested:
-            units.append((name, root, checkouts))
-        units.extend(nested)
-    return units
-
-
-def bare_repos(workspace):
-    return [d for d in subdirs(workspace) if os.path.isdir(os.path.join(workspace, d, ".bare"))]
-
-
-def primary_worktree(workspace, repo):
-    for branch in ("main", "master"):
-        path = os.path.join(workspace, repo, branch)
-        if os.path.isdir(path):
-            return path
-    return None
-
-
-def git_facts(workspace, repos):
-    """Map every checkout path to its worktrunk record. Worktrunk owns the git
-    side: the branch, the dirty state, ahead and behind, and whether the branch
-    already landed on the default branch."""
-    def load(repo):
-        cwd = primary_worktree(workspace, repo)
-        text = run(["wt", "list", "--format", "json"], cwd=cwd) if cwd else ""
-        return repo, json.loads(text)["items"] if text else []
-
-    index = {}
-    with futures.ThreadPoolExecutor(max_workers=max(len(repos), 1)) as pool:
-        for repo, items in pool.map(load, repos):
-            for item in items:
-                path = (item.get("worktree") or {}).get("path")
-                if path:
-                    index[os.path.realpath(path)] = (repo, item)
-    return index
-
-
-def pr_facts(owner, repos):
-    """Map (repo, branch) to its open pull request. One list call per
-    repository. Asking GitHub for the check rollup in the same call times out
-    on repositories this size, so checks are fetched later, per pull request."""
-    fields = "number,headRefName,reviewDecision,isDraft,url"
-
-    def load(repo):
-        text = run(["gh", "pr", "list", "--repo", f"{owner}/{repo}",
-                    "--state", "open", "--json", fields, "--limit", "300"])
-        return repo, json.loads(text) if text else []
-
-    index = {}
-    with futures.ThreadPoolExecutor(max_workers=max(len(repos), 1)) as pool:
-        for repo, prs in pool.map(load, repos):
-            for pr in prs:
-                index[(repo, pr["headRefName"])] = pr
-    return index
-
-
-def failing_checks(owner, matched, ignored):
-    """Names of the genuinely failing checks, per pull request. Only the pull
-    requests that belong to a unit are queried."""
-    def load(key):
-        repo, number = key
-        names = []
-        for line in run(["gh", "pr", "checks", str(number),
-                         "--repo", f"{owner}/{repo}"],
-                        allow_failure=True).splitlines():
-            parts = line.split("\t")
-            if len(parts) > 1 and parts[1] == "fail":
-                names.append(parts[0].strip())
-        return key, [n for n in names if n not in ignored]
-
-    if not matched:
-        return {}
-    with futures.ThreadPoolExecutor(max_workers=min(len(matched), 12)) as pool:
-        return dict(pool.map(load, matched))
-
-
-def inspect(name, root, checkouts, git, prs, now):
-    trees = [git[p] for p in (os.path.realpath(c) for c in checkouts) if p in git]
-    age = int((now - max(os.path.getmtime(p) for p in [root] + list(checkouts))) / 86400)
+def inspect(unit, git, prs, agents):
+    trees = [git[p] for p in (os.path.realpath(c) for c in unit.checkouts) if p in git]
 
     found, dirty, ahead, integrated = [], False, 0, 0
     for repo, item in trees:
         pr = prs.get((repo, item.get("branch")))
         if pr:
             found.append((repo, pr))
-        changes = (item.get("worktree") or {}).get("changes") or {}
-        dirty = dirty or any(changes.get(k) for k in DIRTY_KEYS)
+        dirty = dirty or is_dirty(item)
         ahead = max(ahead, (item.get("default_branch") or {}).get("ahead") or 0)
         integrated += item["display"]["state"] == "integrated"
 
-    return dict(name=name, root=root, age=age, prs=found, failures=[],
-                dirty=dirty, ahead=ahead, integrated=integrated,
-                n_checkouts=len(checkouts), n_known=len(trees))
+    live = agents.get(unit.name, [])
+    return dict(name=unit.name, root=unit.root, age=unit.age_days, prs=found,
+                failures=[], dirty=dirty, ahead=ahead, integrated=integrated,
+                n_checkouts=len(unit.checkouts), n_known=len(trees),
+                agents=[{"name": a.get("name"), "kind": a.get("agent"),
+                         "status": a.get("agent_status"),
+                         "pane": a.get("pane_id")} for a in live])
 
 
 def bucket(unit):
+    states = {a["status"] for a in unit["agents"]}
+    if "blocked" in states:
+        return "BLOCKED"
+    if "done" in states:
+        return "READY"
     if unit["prs"]:
         if unit["failures"]:
             return "BROKEN"
@@ -175,63 +58,66 @@ def bucket(unit):
         return "SETTLE"
     # Recency alone, not evidence of work. A unit created today has no commits
     # and no changes yet, and calling that cold is wrong.
-    if unit["age"] <= 30:
+    if unit["age"] <= 30 or "working" in states:
         return "ACTIVE"
     return "COLD"
 
 
+def render(unit):
+    prs = " ".join(
+        f"{repo}#{pr['number']}"
+        f"/{'draft' if pr['isDraft'] else (pr.get('reviewDecision') or 'pending').lower()}"
+        for repo, pr in unit["prs"])
+    bits = [prs] if prs else []
+    if unit["failures"]:
+        bits.append("FAIL=" + ",".join(unit["failures"]))
+    for agent in unit["agents"]:
+        bits.append(f"[{agent['kind'] or 'agent'}:{agent['status']}]")
+    return f"  {unit['age']:>4}d  {unit['name']:<52} {' '.join(bits)}".rstrip()
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("workspace", nargs="?",
-                    default=os.environ.get("WORKCTL_WORKSPACE",
-                                           os.path.expanduser("~/Projects/vectara-bare")))
-    ap.add_argument("--owner", default="vectara")
+    ap.add_argument("workspace", nargs="?", default=WORKSPACE)
     ap.add_argument("--bucket", action="append", help="show only these buckets")
     ap.add_argument("--ignore-check", action="append", default=[],
                     help="check name to treat as noise (repeatable)")
     ap.add_argument("--json", action="store_true")
     args = ap.parse_args()
 
-    work_dir = os.path.join(args.workspace, "work")
-    if not os.path.isdir(work_dir):
+    if not os.path.isdir(os.path.join(args.workspace, "work")):
         sys.exit(f"no work/ directory under {args.workspace}")
 
     repos = bare_repos(args.workspace)
-    with futures.ThreadPoolExecutor(max_workers=2) as pool:
-        git_job = pool.submit(git_facts, args.workspace, repos)
-        pr_job = pool.submit(pr_facts, args.owner, repos)
-        git, prs = git_job.result(), pr_job.result()
+    units = derive_units(args.workspace)
+    git = git_facts(args.workspace, repos)
+    prs = pr_facts(repos, workspace=args.workspace)
+    agents = agents_by_unit(units)
 
-    now = time.time()
-    units = [inspect(*u, git, prs, now) for u in derive_units(work_dir)]
-
-    matched = {(repo, pr["number"]) for u in units for repo, pr in u["prs"]}
-    checks = failing_checks(args.owner, matched, IGNORED_CHECKS | set(args.ignore_check))
-    for u in units:
-        u["failures"] = sorted({n for repo, pr in u["prs"]
-                                for n in checks.get((repo, pr["number"]), [])})
-        u["bucket"] = bucket(u)
+    rows = [inspect(u, git, prs, agents) for u in units]
+    matched = {(repo, pr["number"]) for r in rows for repo, pr in r["prs"]}
+    checks = failing_checks(matched, ignored=IGNORED_CHECKS | set(args.ignore_check))
+    for row in rows:
+        row["failures"] = sorted({n for repo, pr in row["prs"]
+                                  for n in checks.get((repo, pr["number"]), [])})
+        row["bucket"] = bucket(row)
 
     if args.json:
-        json.dump(units, sys.stdout, indent=1)
-        return
+        json.dump(rows, sys.stdout, indent=1)
+        return 0
 
     wanted = [b.upper() for b in args.bucket] if args.bucket else BUCKETS
-    print(f"{len(units)} units in {args.workspace}\n")
+    print(f"{len(rows)} units in {args.workspace}\n")
     for name in BUCKETS:
-        rows = sorted((u for u in units if u["bucket"] == name), key=lambda u: u["age"])
-        if name not in wanted or not rows:
+        group = sorted((r for r in rows if r["bucket"] == name), key=lambda r: r["age"])
+        if name not in wanted or not group:
             continue
-        print(f"== {name} ({len(rows)})")
-        for u in rows:
-            tag = " ".join(
-                f"{repo}#{pr['number']}"
-                f"/{'draft' if pr['isDraft'] else (pr.get('reviewDecision') or 'pending').lower()}"
-                for repo, pr in u["prs"])
-            fail = ",".join(u["failures"])
-            print(f"  {u['age']:>4}d  {u['name']:<52} {tag}{'  FAIL=' + fail if fail else ''}")
+        print(f"== {name} ({len(group)})")
+        for row in group:
+            print(render(row))
         print()
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())
