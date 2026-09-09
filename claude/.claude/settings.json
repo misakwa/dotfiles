@@ -39,5 +39,6 @@
   "enableCodeSimplifier": true,
   "telemetry": {
     "enabled": false
-  }
+  },
+  "disableRemoteControl": true
 }
