@@ -241,16 +241,15 @@ def main():
     if not args.interval:
         return once(args, ttl_ms)
 
+    # herdr_running() caches the session for the life of the process, so a loop
+    # learns that the server went away from the snapshot call, not from it.
     while True:
-        code = once(args, ttl_ms)
-        if code:
-            return code
+        if once(args, ttl_ms):
+            print("herdr stopped; leaving the sync loop")
+            return 0
         try:
             time.sleep(args.interval)
         except KeyboardInterrupt:
-            return 0
-        if not herdr_running():
-            print("herdr stopped; leaving the sync loop")
             return 0
 
 

@@ -88,6 +88,8 @@ def main():
     ap.add_argument("--ignore-check", action="append", default=[],
                     help="check name to treat as noise (repeatable)")
     ap.add_argument("--json", action="store_true")
+    ap.add_argument("--refresh", action="store_true",
+                    help="ignore the cache and re-read worktrunk and GitHub")
     args = ap.parse_args()
 
     if not os.path.isdir(os.path.join(args.workspace, "work")):
@@ -95,8 +97,8 @@ def main():
 
     repos = bare_repos(args.workspace)
     units = derive_units(args.workspace)
-    git = git_facts(args.workspace, repos)
-    prs = pr_facts(repos, workspace=args.workspace)
+    git = git_facts(args.workspace, repos, refresh=args.refresh)
+    prs = pr_facts(repos, workspace=args.workspace, refresh=args.refresh)
     agents = agents_by_unit(units)
 
     rows = [inspect(u, git, prs, agents) for u in units]

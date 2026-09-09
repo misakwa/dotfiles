@@ -11,9 +11,11 @@ their own directory on sys.path first:
 module lives beside the real files.
 """
 import concurrent.futures as futures
+import hashlib
 import json
 import os
 import subprocess
+import time
 
 WORKSPACE = os.environ.get("WORKCTL_WORKSPACE",
                            os.path.expanduser("~/Projects/vectara-bare"))
@@ -26,6 +28,42 @@ IGNORED_CHECKS = set(
     filter(None, os.environ.get("WORKCTL_IGNORED_CHECKS", "transcript-check").split(",")))
 
 DIRTY_KEYS = ("staged", "modified", "untracked", "deleted", "conflicted")
+
+# `wt list` and `gh pr list` cost about 10 seconds each on this workspace, which
+# is too slow for a keybinding. Neither answer changes minute to minute.
+GIT_TTL = int(os.environ.get("WORKCTL_GIT_TTL", "60"))
+PR_TTL = int(os.environ.get("WORKCTL_PR_TTL", "300"))
+
+
+def cache_dir():
+    base = os.environ.get("XDG_CACHE_HOME") or os.path.expanduser("~/.cache")
+    path = os.path.join(base, "workctl")
+    os.makedirs(path, exist_ok=True)
+    return path
+
+
+def cached(name, key, ttl, build, encode, decode, refresh=False):
+    """Read a cached answer, or build and store one.
+
+    A stale or unreadable file is a miss, never an error: the cache exists to
+    save time, so it must never be the reason a command fails.
+    """
+    digest = hashlib.sha1(repr(key).encode()).hexdigest()[:12]
+    path = os.path.join(cache_dir(), f"{name}-{digest}.json")
+    if not refresh and ttl > 0 and os.path.isfile(path):
+        if time.time() - os.path.getmtime(path) < ttl:
+            try:
+                with open(path, encoding="utf-8") as handle:
+                    return decode(json.load(handle))
+            except (OSError, ValueError, KeyError, TypeError):
+                pass
+    value = build()
+    try:
+        with open(path, "w", encoding="utf-8") as handle:
+            json.dump(encode(value), handle)
+    except (OSError, TypeError):
+        pass
+    return value
 
 
 # --- process helpers -------------------------------------------------------
@@ -160,7 +198,7 @@ def find_unit(name, workspace=None):
 
 # --- worktrunk: the git facts ----------------------------------------------
 
-def git_facts(workspace=None, repos=None):
+def git_facts(workspace=None, repos=None, refresh=False):
     """Map each checkout's real path to (repo, worktrunk record).
 
     Worktrunk owns the git side: the branch, the dirty state, ahead and behind,
@@ -175,13 +213,19 @@ def git_facts(workspace=None, repos=None):
         text = run(["wt", "list", "--format", "json"], cwd=cwd) if cwd else ""
         return repo, (json.loads(text)["items"] if text else [])
 
-    index = {}
-    for repo, items in parallel(load, names, limit=max(len(names), 1)):
-        for item in items:
-            path = (item.get("worktree") or {}).get("path")
-            if path:
-                index[os.path.realpath(path)] = (repo, item)
-    return index
+    def build():
+        index = {}
+        for repo, items in parallel(load, names, limit=max(len(names), 1)):
+            for item in items:
+                path = (item.get("worktree") or {}).get("path")
+                if path:
+                    index[os.path.realpath(path)] = (repo, item)
+        return index
+
+    return cached("git", (root, tuple(names)), GIT_TTL, build,
+                  encode=lambda idx: [[p, r, it] for p, (r, it) in idx.items()],
+                  decode=lambda rows: {p: (r, it) for p, r, it in rows},
+                  refresh=refresh)
 
 
 def is_dirty(item):
@@ -191,7 +235,7 @@ def is_dirty(item):
 
 # --- GitHub: the forge facts -----------------------------------------------
 
-def pr_facts(repos=None, owner=None, workspace=None):
+def pr_facts(repos=None, owner=None, workspace=None, refresh=False):
     """Map (repo, branch) to its open pull request.
 
     One list call per repository. Asking GitHub for statusCheckRollup in the
@@ -207,11 +251,17 @@ def pr_facts(repos=None, owner=None, workspace=None):
                     "--json", fields, "--limit", "300"])
         return repo, (json.loads(text) if text else [])
 
-    index = {}
-    for repo, prs in parallel(load, names, limit=max(len(names), 1)):
-        for pr in prs:
-            index[(repo, pr["headRefName"])] = pr
-    return index
+    def build():
+        index = {}
+        for repo, prs in parallel(load, names, limit=max(len(names), 1)):
+            for pr in prs:
+                index[(repo, pr["headRefName"])] = pr
+        return index
+
+    return cached("pr", (who, tuple(names)), PR_TTL, build,
+                  encode=lambda idx: [[r, b, pr] for (r, b), pr in idx.items()],
+                  decode=lambda rows: {(r, b): pr for r, b, pr in rows},
+                  refresh=refresh)
 
 
 def failing_checks(pairs, owner=None, ignored=None):

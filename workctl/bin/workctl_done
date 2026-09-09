@@ -217,27 +217,33 @@ def step_merged(facts):
 
 
 def step_agents(unit, workspace, apply_):
-    """Close the finished panes and return (session records, workspace ids)."""
+    """Close the finished panes.
+
+    Returns the session records, the workspace ids they sat in, and the panes
+    still busy. A busy agent stops the settle: step 7 would close the workspace
+    out from under it.
+    """
     print("\n4. agent threads")
     if not herdr_running():
         print("   herdr is not running; no pane to close and no session to record")
-        return [], []
+        return [], [], []
 
     live = agents_by_unit(derive_units(workspace)).get(unit.name, [])
     if not live:
         print("   no agent inside this unit")
-        return [], []
+        return [], [], []
 
-    records, spaces = [], []
+    records, spaces, busy = [], [], []
     for agent in live:
         status = agent.get("agent_status")
         pane = agent.get("pane_id")
         kind = agent.get("agent") or "agent"
-        if agent.get("workspace_id"):
-            spaces.append(agent["workspace_id"])
         if status not in SETTLED_STATES:
             print(f"   {kind} in pane {pane} is {status}; left alone")
+            busy.append(f"{pane} ({status})")
             continue
+        if agent.get("workspace_id"):
+            spaces.append(agent["workspace_id"])
         session = agent.get("agent_session") or {}
         record = dict(pane=pane, agent=kind, status=status,
                       kind=session.get("kind"), value=session.get("value"),
@@ -253,7 +259,7 @@ def step_agents(unit, workspace, apply_):
             print(f"     closed pane {pane}")
         else:
             print(f"     would close pane {pane}")
-    return records, sorted(set(spaces))
+    return records, sorted(set(spaces)), busy
 
 
 def capture_hunk(unit):
@@ -287,7 +293,7 @@ def step_archive(unit, workspace, records, apply_):
         print(f"   {'capture' if apply_ else 'would capture'} the live Hunk "
               f"review as {name}")
     print(f"   {'write' if apply_ else 'would write'} SESSIONS.txt "
-          f"({len(records)} sessions)")
+          f"({len(records)} session" + ("" if len(records) == 1 else "s") + ")")
 
     clash = [e for e in entries if os.path.exists(os.path.join(dest, e))]
     if clash:
@@ -310,8 +316,11 @@ def step_archive(unit, workspace, records, apply_):
                 handle.write("# no agent session was recorded\n")
             for record in records:
                 handle.write(f"pane {record['pane']}  agent={record['agent']}  "
-                             f"status={record['status']}  kind={record['kind']}  "
-                             f"value={record['value']}\n")
+                             f"status={record['status']}\n")
+                if record["value"]:
+                    handle.write(f"  {record['kind']}: {record['value']}\n")
+                else:
+                    handle.write("  no session identity was reported\n")
                 if record["transcript"]:
                     handle.write(f"  transcript: {record['transcript']}\n")
         for entry in entries:
@@ -469,7 +478,13 @@ def main():
             print("stopped; nothing was changed")
             return 1
 
-    records, spaces = step_agents(unit, args.workspace, args.apply)
+    records, spaces, busy = step_agents(unit, args.workspace, args.apply)
+    if busy:
+        print("\nstopped at step 4. An agent is still running in "
+              + ", ".join(busy) + "\nAnswer it or stop it, then settle the unit.",
+              file=sys.stderr)
+        return 1
+
     if not step_archive(unit, args.workspace, records, args.apply):
         return 1
     if not step_remove(unit, args.workspace, args.apply):
