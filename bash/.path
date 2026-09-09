@@ -9,6 +9,11 @@ unset brew
 export ASDF_DATA_DIR="${ASDF_DATA_DIR:-$HOME/.asdf}"
 export PATH="$ASDF_DATA_DIR/shims:$HOME/go/bin:$PATH"
 
+# Stowed wrappers land in ~/bin and uv lives in ~/.local/bin. Both must be here
+# rather than in ~/.exports: non-interactive shells skip .zshrc, so a herdr
+# keybinding or a worktrunk hook would not find them.
+export PATH="$HOME/bin:$HOME/.local/bin:$PATH"
+
 export PATH="$HOME/.config/emacs/bin:$PATH"
 # Keeps the package tree outside the Doom clone, so `make doom-reclone` and the
 # daemon's own environment both find it. Must match emacs-daemon-service.
