@@ -22,3 +22,6 @@ launchd/Library/LaunchAgents/*.plist
 
 # Emacs Customize writes $DOOMDIR/custom.el; that's machine state, not config
 doom/.config/doom/custom.el
+
+# Backups the agent tools write beside their own config
+*.bak
