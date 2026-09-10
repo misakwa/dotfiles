@@ -72,25 +72,49 @@ def create_checkout(workspace, repo, name, branch, base, dry_run):
 
 
 def attach_herdr(root, name, checkouts, dry_run):
+    """Create the unit's herdr workspace. Returns (workspace_id, root_pane_id)."""
     if dry_run:
         print(f"herdr: would create a workspace at {root}")
-        return
+        return None, None
     if not herdr_running():
         print("herdr: not running; start it and run `workctl go` to attach this unit")
-        return
+        return None, None
 
     result = herdr(["workspace", "create", "--cwd", root, "--label", name, "--focus"])
     if not result:
-        return
+        return None, None
     workspace_id = (result.get("workspace") or {}).get("workspace_id")
+    root_pane = (result.get("root_pane") or {}).get("pane_id")
     print(f"herdr: workspace {workspace_id} at {root}")
 
-    # A herdr workspace binds to at most one worktree, so only a single-checkout
-    # unit can fill the built-in branch and git_status sidebar rows.
-    if workspace_id and len(checkouts) == 1:
-        if herdr(["worktree", "open", "--workspace", workspace_id,
-                  "--path", checkouts[0], "--no-focus"]):
-            print(f"herdr: bound {os.path.basename(checkouts[0])} to the workspace")
+    # No `herdr worktree open` here. It refuses a workspace whose own cwd is not
+    # a git work tree, which a unit root never is, and refuses a linked worktree
+    # too. `workctl sync` carries the branch state as tokens instead.
+    return workspace_id, root_pane
+
+
+def launch_agent(name, kind, root, pane, dry_run):
+    """Start the agent on the new unit.
+
+    Inside herdr the unit already has its own focused workspace, so start the
+    agent in that workspace's pane. Without herdr, take over this terminal.
+    """
+    sibling = os.path.join(os.path.dirname(os.path.realpath(__file__)), "workctl_agent")
+    if dry_run:
+        where = f"herdr pane {pane}" if pane else "this terminal"
+        print(f"agent: would start {kind} for {name} in {where}")
+        return
+
+    if pane:
+        started = herdr(["agent", "start", name.replace("/", "-"),
+                         "--kind", kind, "--pane", pane])
+        if started is not None:
+            print(f"agent: {kind} started in pane {pane}")
+            return
+        print("agent: herdr could not start it there; falling back to this terminal",
+              file=sys.stderr)
+
+    os.execv(sibling, [sibling, name, "--new", "--kind", kind])
 
 
 def main():
@@ -104,6 +128,9 @@ def main():
                     help=f"branch name (default: {BRANCH_PREFIX}<name>)")
     ap.add_argument("--workspace", default=WORKSPACE)
     ap.add_argument("--no-herdr", action="store_true", help="do not create a herdr workspace")
+    ap.add_argument("--agent", nargs="?", const="claude", metavar="KIND",
+                    choices=["claude", "codex", "pi"],
+                    help="launch an agent on the new unit (default claude)")
     ap.add_argument("--dry-run", action="store_true", help="print what would happen")
     args = ap.parse_args()
 
@@ -136,8 +163,13 @@ def main():
     if not args.repo:
         print("notes-only unit; no checkout created")
 
+    pane = None
     if not args.no_herdr:
-        attach_herdr(root, args.name, checkouts, args.dry_run)
+        _, pane = attach_herdr(root, args.name, checkouts, args.dry_run)
+
+    if args.agent:
+        launch_agent(args.name, args.agent, root, pane, args.dry_run)
+        return 0
 
     print(f"\ncd {root}")
     return 0

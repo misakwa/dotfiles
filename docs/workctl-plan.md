@@ -72,6 +72,73 @@ individual check names rather than the aggregate. The right long-term fix is to
 remove or repair `transcript-check` on the repository. Until that happens, the
 ignore list carries it.
 
+## Why workctl exists
+
+Herdr's model and this workflow disagree, and no amount of configuration
+reconciles them. That disagreement is the reason for this tool.
+
+**Herdr's model: one workspace holds one worktree of one repository.**
+
+I confirmed this three separate ways.
+
+1. In the socket API schema, `WorkspaceInfo.worktree` is a single
+   `WorkspaceWorktreeInfo` or null, never a list. That record names exactly one
+   `repo_key`, one `repo_root`, and one `checkout_path`.
+
+2. `herdr worktree open` refuses a workspace whose own directory is not a git
+   work tree. A unit root, holding checkouts as subdirectories, never is:
+
+   ```
+   {"error":{"code":"not_git_worktree","message":"Herdr worktree actions
+    require a workspace inside a Git work tree"}}
+   ```
+
+3. It also refuses when the target is itself a linked worktree, which is what
+   every checkout in this layout is:
+
+   ```
+   {"error":{"code":"linked_worktree_source","message":"New and open worktree
+    actions start from the repo parent workspace."}}
+   ```
+
+Two independent refusals. There is no argument that satisfies both.
+
+**Your model: one unit holds several worktrees across several repositories,
+plus files that are in no repository at all.**
+
+Eight units span more than one repository. Five hold only notes and no checkout
+whatsoever. Every unit carries unversioned Markdown, scripts, and images beside
+its checkouts. Your `bare-repo-worktrees` skill states the intent directly: `cd
+work/<name>` and start one session that sees each repository as a subdirectory.
+
+**The consequence.** Of your 66 herdr workspaces, herdr considers 0 bound to a
+worktree. The built-in sidebar rows `branch` and `git_status` are therefore
+blank on every one, and always will be.
+
+**What workctl does about it.** It stops asking herdr to model a unit, and uses
+herdr only for what herdr is good at: panes, agents, focus, and a sidebar.
+
+| Concern | Owner |
+|---|---|
+| What a unit is | `workctl`, derived from the folder structure |
+| Worktrees and branches | `wt`, driven once per repository |
+| Pull requests and checks | `gh` |
+| Panes, agents, focus | `herdr` |
+| Branch and CI state in the sidebar | `workctl sync`, as `$br`, `$pr`, `$ci` tokens |
+
+A herdr workspace for a unit is a plain directory, not a worktree, and that is
+deliberate. The state herdr cannot derive arrives as metadata tokens instead:
+
+```
+admin-extend-session-503     platform            -              -
+api-test-suite-failures      2 repos             -              -
+apiv2-delete-errors          platform@detached   -              -
+artifactory-jcr-setup        provisioning        #395 approved  ok
+```
+
+The sidebar config uses `$br`, `$pr`, and `$ci` rather than the built-ins for
+this reason. Do not put `branch` or `git_status` back; they cannot work here.
+
 ## One unit does not fit the layout
 
 `workctl show ti-agent-developer` turned this up. That unit holds three
@@ -403,11 +470,10 @@ with the same `<name>` and the same branch. The herdr workspace is created at
 `work/<name>/`, so one session sees every repository as a subdirectory, which
 is what your `bare-repo-worktrees` skill already prescribes.
 
-When the unit has exactly one checkout, `workctl new` also binds it with
-`herdr worktree open`, which fills the built-in `branch` and `git_status`
-sidebar rows. A multi-repository unit cannot be bound, because a herdr
-workspace holds at most one worktree. `workctl sync` covers those with custom
-tokens instead.
+`workctl new` does not call `herdr worktree open`. Herdr refuses it for a unit
+root and refuses it for a linked worktree, so there is no case where it
+succeeds. `workctl sync` carries the branch state as tokens instead. See "Why
+workctl exists".
 
 When herdr is not running, `workctl new` still creates everything on disk and
 says so. Nothing is lost; attach the workspace later.
@@ -640,14 +706,6 @@ review. Do not put that on a keybinding.
 
 Two ideas are worth copying into `workctl`.
 
-**Register single-checkout units with herdr.** The plugin calls
-`herdr worktree open` to bind a checkout to a workspace. Do the same in
-`workctl new` when a unit has exactly one checkout, which is 64 of your 77. That
-binding is what fills the built-in sidebar rows `branch` and `git_status`.
-Multi-repository units cannot be bound, because the model holds only one
-worktree, which is exactly why `workctl sync` pushes `$pr` and `$ci` as custom
-tokens instead. Both kinds of unit then show useful state in the same sidebar.
-
 **Let worktrunk gate removal.** `wt remove` is stricter and more useful than
 `git worktree remove`. Without `--force` it fails if the checkout holds any
 uncommitted change, staged, modified, or untracked. It deletes the branch only
@@ -862,8 +920,11 @@ plus two integration installs.
 
    ```toml
    [ui.sidebar.spaces]
-   rows = [["state_icon", "workspace"], ["$pr", "$ci", "git_status"]]
+   rows = [["state_icon", "workspace"], ["$br", "$pr", "$ci"]]
    ```
+
+   All three are custom tokens from `workctl sync`. The built-in `branch` and
+   `git_status` rows cannot work here. See "Why workctl exists".
 
    `workctl sync` writes each token with
    `herdr workspace report-metadata <id> --source workctl --token pr=#3325 --token ci=failed`.

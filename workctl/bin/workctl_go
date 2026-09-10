@@ -92,12 +92,9 @@ def create_workspace(unit):
     space_id = (result.get("workspace") or {}).get("workspace_id")
     print(f"created workspace {space_id} at {unit.root}")
 
-    # A herdr workspace binds to at most one worktree, so only a single-checkout
-    # unit can fill the built-in branch and git_status sidebar rows.
-    if space_id and len(unit.checkouts) == 1:
-        if herdr(["worktree", "open", "--workspace", space_id,
-                  "--path", unit.checkouts[0], "--no-focus"]):
-            print(f"bound {os.path.basename(unit.checkouts[0])} to the workspace")
+    # No `herdr worktree open` here. It refuses a workspace whose own cwd is not
+    # a git work tree, which a unit root never is, and refuses a linked worktree
+    # too. `workctl sync` carries the branch state as tokens instead.
     return 0
 
 
