@@ -21,6 +21,16 @@ WORKSPACE = os.environ.get("WORKCTL_WORKSPACE",
                            os.path.expanduser("~/Projects/vectara-bare"))
 BRANCH_PREFIX = os.environ.get("WORKCTL_BRANCH_PREFIX", "misakwa/")
 OWNER = os.environ.get("WORKCTL_OWNER", "vectara")
+AUTHOR = os.environ.get("WORKCTL_AUTHOR", "misakwa")
+
+# The unit model holds checkouts at depth 1 and 2. Scan deeper than that so a
+# command can see the checkouts the model does not hold, rather than treating
+# the directory that holds them as notes.
+SCAN_DEPTH = int(os.environ.get("WORKCTL_SCAN_DEPTH", "5"))
+
+# `gh pr list` truncates silently at --limit. platform sits near 295 open pull
+# requests, so a limit of 300 drops the oldest without saying so.
+PR_LIMIT = int(os.environ.get("WORKCTL_PR_LIMIT", "1000"))
 
 # Checks that fail permanently and say nothing about the branch. One always-red
 # check would otherwise turn every pull request in the repository red.
@@ -141,11 +151,45 @@ class Unit:
     def __repr__(self):
         return f"Unit({self.name!r}, {len(self.checkouts)} checkouts)"
 
+    def hidden_checkouts(self):
+        """Checkouts on disk that the unit model does not hold.
+
+        A directory holding one of these is not notes. Moving it breaks the
+        `.bare/worktrees/*` link of a live worktree.
+        """
+        known = {os.path.realpath(p) for p in self.checkouts}
+        return [p for p in all_checkouts(self.root)
+                if os.path.realpath(p) not in known]
+
     @property
     def age_days(self):
-        newest = max(os.path.getmtime(p) for p in [self.root] + list(self.checkouts))
-        import time
+        """Days since the unit was last worked on.
+
+        Directory mtime alone dates a unit by its last `mv`: one mass move in
+        July gave 36 units the same age. Commit dates and agent session files
+        record when work happened, so they win when either exists.
+        """
+        newest = max(os.path.getmtime(p)
+                     for p in [self.root] + list(self.checkouts))
+        newest = max([newest] + self.commit_times() + self.session_times())
         return int((time.time() - newest) / 86400)
+
+    def commit_times(self):
+        found = []
+        for checkout in self.checkouts:
+            text = run(["git", "-C", checkout, "log", "-1", "--format=%ct"]).strip()
+            if text.isdigit():
+                found.append(int(text))
+        return found
+
+    def session_times(self):
+        found = []
+        for base in (CLAUDE_ROOT, PI_ROOT):
+            directory = os.path.join(base, slug(self.root))
+            for name in (os.listdir(directory) if os.path.isdir(directory) else []):
+                if name.endswith(".jsonl"):
+                    found.append(os.path.getmtime(os.path.join(directory, name)))
+        return found
 
     def label_for(self, checkout):
         """A path prefix naming the checkout inside its unit, for combined diffs."""
@@ -165,6 +209,30 @@ def checkouts_of(root):
         child = os.path.join(root, child_name)
         if is_checkout(child):
             found.append(child)
+    return found
+
+
+def all_checkouts(root, max_depth=SCAN_DEPTH):
+    """Every checkout under a directory, at any depth.
+
+    `checkouts_of` answers what the unit model holds. This answers what is
+    really on disk, so a caller can refuse to touch the difference.
+    """
+    found = []
+
+    def walk(path, depth):
+        here = is_checkout(path)
+        if here:
+            found.append(path)
+        # A worktree never holds another, but a unit root may be a checkout
+        # and still hold siblings, so only stop descending below the root.
+        if depth >= max_depth or (here and depth > 0):
+            return
+        for name in subdirs(path):
+            if not name.startswith("."):
+                walk(os.path.join(path, name), depth + 1)
+
+    walk(root, 0)
     return found
 
 
@@ -256,11 +324,11 @@ def pr_facts(repos=None, owner=None, workspace=None, refresh=False):
     """
     names = repos if repos is not None else bare_repos(workspace)
     who = owner or OWNER
-    fields = "number,headRefName,reviewDecision,isDraft,url"
+    fields = "number,headRefName,reviewDecision,isDraft,url,author"
 
     def load(repo):
         text = run(["gh", "pr", "list", "--repo", f"{who}/{repo}", "--state", "open",
-                    "--json", fields, "--limit", "300"])
+                    "--json", fields, "--limit", str(PR_LIMIT)])
         return repo, (json.loads(text) if text else [])
 
     def build():
@@ -270,10 +338,24 @@ def pr_facts(repos=None, owner=None, workspace=None, refresh=False):
                 index[(repo, pr["headRefName"])] = pr
         return index
 
-    return cached("pr", (who, tuple(names)), PR_TTL, build,
+    return cached("pr", (who, tuple(names), PR_LIMIT), PR_TTL, build,
                   encode=lambda idx: [[r, b, pr] for (r, b), pr in idx.items()],
                   decode=lambda rows: {(r, b): pr for r, b, pr in rows},
                   refresh=refresh)
+
+
+def pr_author(pr):
+    return ((pr or {}).get("author") or {}).get("login") or ""
+
+
+def is_own_pr(pr, author=None):
+    """Whether a pull request is his. An unknown author counts as his.
+
+    `gh` omits the author on a pull request it cannot attribute, and calling
+    that someone else's would hide real work.
+    """
+    login = pr_author(pr)
+    return not login or login == (author or AUTHOR)
 
 
 def failing_checks(pairs, owner=None, ignored=None):
@@ -325,6 +407,33 @@ def unresolved_threads(pairs, owner=None):
                         if not t["isResolved"] and t["comments"]["totalCount"])
 
     return dict(parallel(load, pairs))
+
+
+def outside_units(git, workspace=None):
+    """Worktrees worktrunk reports that no unit holds.
+
+    Siblings in `<root>/<repo>/<slug>`, units at `<root>/<name>/<repo>`, and
+    checkouts deeper than a sub-unit. The board never mentions these, so an
+    open pull request can sit in one unseen.
+    """
+    root = os.path.realpath(workspace or WORKSPACE)
+    held = {os.path.realpath(c) for u in derive_units(workspace) for c in u.checkouts}
+    primaries = {os.path.realpath(p)
+                 for p in (primary_worktree(r, workspace) for r in bare_repos(workspace))
+                 if p}
+    found = []
+    for path, (repo, item) in git.items():
+        if path in held or path in primaries:
+            continue
+        rest = path[len(root) + 1:] if path.startswith(root + os.sep) else ""
+        if not rest:
+            continue
+        # Agents and tools keep their own worktrees under dot-directories such
+        # as `<repo>/.bare/.claude/worktrees/`. Those are not his work.
+        if any(part.startswith(".") for part in rest.split(os.sep)):
+            continue
+        found.append((repo, path, item))
+    return sorted(found, key=lambda row: row[1])
 
 
 # --- agent session history -------------------------------------------------
