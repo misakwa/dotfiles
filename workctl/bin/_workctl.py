@@ -446,13 +446,41 @@ def herdr_session():
     # Inside a herdr pane, follow the session that owns this pane.
     socket = os.environ.get("HERDR_SOCKET_PATH")
     chosen = next((s for s in running if s.get("socket_path") == socket), None) if socket else None
-    if chosen is None:
-        chosen = next((s for s in running if s.get("default")), None)
+
+    # Otherwise pick the session that actually holds this workspace. Preferring
+    # the default session is wrong: a stray `herdr` launches an empty one, and
+    # the real work then sits in a named session nobody would find.
+    if chosen is None and len(running) > 1:
+        chosen = max(running, key=lambda s: _workspaces_under(s["name"], WORKSPACE))
     if chosen is None and running:
         chosen = running[0]
 
     _SESSION = chosen["name"] if chosen else ""
     return _SESSION or None
+
+
+def _workspaces_under(session, root):
+    """How many of a session's workspaces sit inside this workspace directory."""
+    out = subprocess.run(["herdr", "--session", session, "workspace", "list"],
+                         capture_output=True, text=True)
+    if out.returncode != 0:
+        return 0
+    try:
+        spaces = json.loads(out.stdout)["result"]["workspaces"]
+    except (ValueError, KeyError):
+        return 0
+    ids = [w["workspace_id"] for w in spaces]
+    if not ids:
+        return 0
+    detail = subprocess.run(["herdr", "--session", session, "api", "snapshot"],
+                            capture_output=True, text=True)
+    try:
+        snap = json.loads(detail.stdout)["result"]
+    except (ValueError, KeyError):
+        return len(ids)
+    panes = (snap.get("snapshot") or snap).get("panes") or []
+    hits = sum(1 for p in panes if (p.get("cwd") or "").startswith(root))
+    return hits or len(ids)
 
 
 def herdr_running():
