@@ -242,8 +242,10 @@ Keep the surface small. Nine commands cover the day.
 ### Reading
 
 - `workctl` prints the board, grouped by bucket, newest first inside each group.
-- `workctl sessions [<name>]` lists the Claude, Codex, and Pi sessions recorded
-  inside your units. See "Finding the agent history".
+- `workctl agent-sessions [<name>]` lists the agent sessions recorded inside
+  your units. See "The agent history".
+- `workctl agent <name>` resumes the most recent session in a unit, or starts a
+  new one.
 - `workctl show <name>` prints one unit in full: every checkout, its branch, its
   pull request, its CI, its live agents, its note files, and its age.
 - `workctl board --watch` prints the same board and refreshes it. This is the view
@@ -681,7 +683,7 @@ height = "60%"
 Check native first. This is worktrunk's own feature, and it does not add a
 second way to create a worktree.
 
-## Finding the agent history
+## The agent history
 
 Each agent files its history under the directory it ran in, and each does it
 differently:
@@ -696,14 +698,39 @@ This matters because Claude started at a unit root shows only the sessions
 recorded for that exact path. Work done one level down, inside a checkout, is
 invisible. `workctl sessions` finds those and can move them up:
 
+Two commands cover it. One lists, one runs.
+
 ```bash
-workctl sessions                          # every unit
-workctl sessions INC-355
-workctl sessions --below-root             # only what a run at the root would miss
-workctl sessions INC-355 --move-to-root   # dry run
-workctl sessions INC-355 --move-to-root --apply
-workctl sessions --orphans
+workctl agent-sessions                          # every unit
+workctl agent-sessions INC-355
+workctl agent-sessions --below-root             # what a run at the root would miss
+workctl agent-sessions INC-355 --move-to-root   # dry run
+workctl agent-sessions INC-355 --move-to-root --apply
+workctl agent-sessions --orphans
+
+workctl agent INC-355                # resume the most recent session here
+workctl agent INC-355 --new          # start a fresh one
+workctl agent INC-355 --pick         # the agent's own session picker
+workctl agent INC-355 --kind codex   # choose the agent
 ```
+
+`workctl agent` sets the working directory to the unit root and then gets out
+of the way. It does not parse session files or pass identifiers around; each
+agent already knows its own history, so it delegates:
+
+| Agent | resume | pick | new |
+|---|---|---|---|
+| Claude | `claude -c` | `claude -r` | `claude` |
+| Codex | `codex resume --last` | `codex resume` | `codex` |
+| Pi | `pi -c` | `pi -r` | `pi` |
+
+With no `--kind` it picks the agent whose newest session in that unit is the
+most recent, so `workctl agent sandisk-deploy-sept-1` opens Codex while
+`workctl agent INC-355` opens Claude. With no history at all it says so and
+starts a new session rather than failing.
+
+When a session sits below the unit root it warns, because resuming at the root
+cannot reach it, and names the command that would move it up.
 
 It scans the unit root and two levels below it, which covers both
 `work/<name>/<repo>` and `work/<name>/<sub>/<repo>`.

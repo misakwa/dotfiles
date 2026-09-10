@@ -315,6 +315,107 @@ def unresolved_threads(pairs, owner=None):
     return dict(parallel(load, pairs))
 
 
+# --- agent session history -------------------------------------------------
+
+CLAUDE_ROOT = os.path.expanduser("~/.claude/projects")
+CODEX_ROOT = os.path.expanduser("~/.codex/sessions")
+PI_ROOT = os.path.expanduser("~/.pi/agent/sessions")
+
+DEPTH = 2
+
+
+def slug(path):
+    """Claude and Pi name a directory by its path with the separators flattened."""
+    return path.replace(os.sep, "-")
+
+
+def candidates(unit, depth=DEPTH):
+    """The unit root and every directory under it, to the given depth."""
+    found = [unit.root]
+    frontier = [unit.root]
+    for _ in range(depth):
+        nxt = []
+        for parent in frontier:
+            for name in subdirs(parent):
+                if name.startswith("."):
+                    continue
+                child = os.path.join(parent, name)
+                found.append(child)
+                nxt.append(child)
+        frontier = nxt
+    return found
+
+
+def claude_sessions(paths):
+    by_slug = {slug(p): p for p in paths}
+    found = []
+    for entry in os.listdir(CLAUDE_ROOT) if os.path.isdir(CLAUDE_ROOT) else []:
+        path = by_slug.get(entry)
+        if not path:
+            continue
+        directory = os.path.join(CLAUDE_ROOT, entry)
+        for name in sorted(os.listdir(directory)):
+            if name.endswith(".jsonl"):
+                found.append(("claude", path, os.path.join(directory, name)))
+    return found
+
+
+def first_record(path):
+    try:
+        with open(path, encoding="utf-8", errors="replace") as handle:
+            return json.loads(handle.readline())
+    except (OSError, ValueError):
+        return {}
+
+
+def codex_sessions(paths):
+    """Codex files by date, not by directory, so read the cwd out of each one."""
+    wanted = set(paths)
+    found = []
+    for base, _, names in os.walk(CODEX_ROOT):
+        for name in sorted(names):
+            if not name.endswith(".jsonl"):
+                continue
+            path = os.path.join(base, name)
+            cwd = (first_record(path).get("payload") or {}).get("cwd")
+            if cwd in wanted:
+                found.append(("codex", cwd, path))
+    return found
+
+
+def pi_sessions(paths):
+    by_slug = {f"-{slug(p)}-": p for p in paths}
+    found = []
+    for entry in os.listdir(PI_ROOT) if os.path.isdir(PI_ROOT) else []:
+        path = by_slug.get(entry)
+        if not path:
+            continue
+        directory = os.path.join(PI_ROOT, entry)
+        for name in sorted(os.listdir(directory)):
+            if name.endswith(".jsonl"):
+                found.append(("pi", path, os.path.join(directory, name)))
+    return found
+
+
+def sessions_for(unit, kinds, depth=DEPTH):
+    paths = candidates(unit, depth)
+    found = []
+    if "claude" in kinds:
+        found += claude_sessions(paths)
+    if "codex" in kinds:
+        found += codex_sessions(paths)
+    if "pi" in kinds:
+        found += pi_sessions(paths)
+
+    rows = []
+    for kind, path, file in found:
+        rows.append(dict(unit=unit.name, kind=kind, cwd=path, file=file,
+                         at_root=os.path.realpath(path) == os.path.realpath(unit.root),
+                         age=int((time.time() - os.path.getmtime(file)) / 86400),
+                         size=os.path.getsize(file)))
+    return sorted(rows, key=lambda r: (r["cwd"], r["file"]))
+
+
 # --- herdr -----------------------------------------------------------------
 
 _SESSION = None

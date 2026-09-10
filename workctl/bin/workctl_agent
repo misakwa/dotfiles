@@ -1,0 +1,87 @@
+#!/usr/bin/env -S uv run --script
+# /// script
+# requires-python = ">=3.11"
+# dependencies = []
+# ///
+"""Resume the most recent agent session in a unit, or start a new one.
+
+Runs the agent with the unit root as its working directory, so it sees every
+repository in the unit as a subdirectory. Each agent knows its own history, so
+this picks the directory and the agent and then gets out of the way. Use
+`workctl agent-sessions` to see what history a unit holds.
+"""
+import argparse
+import os
+import shutil
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
+from _workctl import WORKSPACE, find_unit, sessions_for
+
+KINDS = ("claude", "codex", "pi")
+
+# Each agent has its own notion of "the most recent one here" and its own
+# picker. Delegate to those rather than parsing session files.
+LAUNCH = {
+    "claude": {"new": [], "continue": ["-c"], "pick": ["-r"]},
+    "codex": {"new": [], "continue": ["resume", "--last"], "pick": ["resume"]},
+    "pi": {"new": [], "continue": ["-c"], "pick": ["-r"]},
+}
+
+
+def newest_kind(rows, at_root_only=True):
+    """The agent whose newest session in this unit is the most recent."""
+    usable = [r for r in rows if r["at_root"]] if at_root_only else rows
+    if not usable:
+        return None
+    return min(usable, key=lambda r: r["age"])["kind"]
+
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__,
+                                 formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("name", help="unit name, as it appears under work/")
+    ap.add_argument("--kind", choices=KINDS,
+                    help="which agent; default is the one with the newest session here")
+    ap.add_argument("--new", action="store_true", help="start a fresh session")
+    ap.add_argument("--pick", action="store_true", help="choose from the agent's own picker")
+    ap.add_argument("--workspace", default=WORKSPACE)
+    ap.add_argument("--dry-run", action="store_true", help="print the command and stop")
+    args, passthrough = ap.parse_known_args()
+
+    unit = find_unit(args.name, args.workspace)
+    if not unit:
+        sys.exit(f"no unit named {args.name} under {args.workspace}/work")
+    if not os.path.isdir(unit.root):
+        sys.exit(f"{unit.name} has no directory at {unit.root}")
+
+    rows = sessions_for(unit, set(KINDS))
+    kind = args.kind or newest_kind(rows) or "claude"
+    if not shutil.which(kind):
+        sys.exit(f"{kind} is not on PATH")
+
+    mode = "new" if args.new else ("pick" if args.pick else "continue")
+    at_root = [r for r in rows if r["at_root"] and r["kind"] == kind]
+    if mode == "continue" and not at_root:
+        # Nothing to continue, so a bare launch is the honest equivalent.
+        mode = "new"
+        print(f"{unit.name}: no {kind} session at the unit root; starting a new one",
+              file=sys.stderr)
+
+    below = [r for r in rows if not r["at_root"]]
+    if below and mode != "new":
+        print(f"{unit.name}: {len(below)} session(s) sit below the root and stay "
+              f"invisible here. Run `workctl agent-sessions {unit.name} --move-to-root`.",
+              file=sys.stderr)
+
+    cmd = [kind] + LAUNCH[kind][mode] + passthrough
+    print(f"{unit.name}: {' '.join(cmd)}  (in {unit.root})", file=sys.stderr)
+    if args.dry_run:
+        return 0
+
+    os.chdir(unit.root)
+    os.execvp(cmd[0], cmd)
+
+
+if __name__ == "__main__":
+    sys.exit(main())
