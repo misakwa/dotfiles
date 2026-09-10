@@ -29,9 +29,10 @@ IGNORED_CHECKS = set(
 
 DIRTY_KEYS = ("staged", "modified", "untracked", "deleted", "conflicted")
 
-# `wt list` and `gh pr list` cost about 10 seconds each on this workspace, which
-# is too slow for a keybinding. Neither answer changes minute to minute.
-GIT_TTL = int(os.environ.get("WORKCTL_GIT_TTL", "60"))
+# `wt list` and `gh pr list` cost about 10 seconds each on this workspace, so a
+# cold board takes 20. That is a blank window on a keybinding, so cache both for
+# long enough that a keypress rarely pays it. Pass --refresh when it matters.
+GIT_TTL = int(os.environ.get("WORKCTL_GIT_TTL", "300"))
 PR_TTL = int(os.environ.get("WORKCTL_PR_TTL", "300"))
 
 
