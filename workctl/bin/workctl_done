@@ -174,12 +174,10 @@ def step_working_tree(unit):
         if len(lines) > 5:
             print(f"     ... and {len(lines) - 5} more")
     if stop:
-        # `review --working` is `git diff`, which never lists untracked files.
         print(f"\nstopped at step 1. Review them first:\n"
               f"  workctl review {unit.name} --working")
         for checkout in dirty:
             print(f"  git -C {checkout} status --porcelain")
-        print("The review shows tracked changes only; git status lists untracked files too.")
     return stop
 
 
