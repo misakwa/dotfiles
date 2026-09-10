@@ -909,7 +909,7 @@ plus two integration installs.
 
    ```toml
    [[keys.command]]
-   key = "prefix+alt+w"
+   key = "prefix+shift+b"
    type = "popup"
    command = "workctl board --watch"
    width = "90%"
@@ -1024,7 +1024,7 @@ Create `~/.config/worktrunk/config.toml` and install the shell integration.
 
 This is the loop the tools support.
 
-1. Open herdr. Press `prefix+alt+w`. Read the board.
+1. Open herdr. Press `prefix+shift+b`. Read the board.
 2. Clear `BLOCKED` first. Each one is an agent waiting on you right now.
 3. Clear `READY` next. Each one is finished work you have not seen. For each:
    press `prefix+shift+u` to read the whole unit, then focus the pane you
