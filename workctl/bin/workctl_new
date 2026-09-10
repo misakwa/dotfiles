@@ -6,7 +6,8 @@
 """Create a unit of work: one branch and checkout per repository.
 
 The name argument supplies all three names: the directory work/<name>, the
-branch <prefix><name>, and the label of the herdr workspace. Pass it once.
+branch <prefix><name>, and the label of the herdr workspace. Pass it once. A
+sub-unit name such as INC-355/x takes the branch <prefix>INC-355-x.
 
 Drives worktrunk to create each checkout, so worktrunk's hooks, base-branch
 handling, and gates all apply. Overrides the worktree path for each call so the
@@ -14,7 +15,14 @@ checkouts land at work/<name>/<repo> rather than under worktrunk's own
 template. Then creates a herdr workspace at the unit root, when herdr is
 running.
 
-Pass no --repo to create a unit that holds only notes.
+Pass --from to attach a branch or pull request that already exists, in any form
+`wt switch` accepts: `--from misakwa/some-branch`, `--from pr:7749`, or the
+pull request's URL. No branch is created then, so --base and --branch do not
+apply.
+
+Pass no --repo to create a unit that holds only notes. Run it again on an
+existing unit to add a repository: the checkouts already in place are kept and
+only the missing ones are created.
 """
 import argparse
 import os
@@ -23,7 +31,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
 from _workctl import (BRANCH_PREFIX, add_root_arg, bare_repos, herdr, herdr_running,
-                      primary_worktree)
+                      is_checkout, primary_worktree, work_dir)
 
 # Worktrunk cannot strip a prefix from a branch name in a path template, so the
 # unit name is substituted here and the template supplies only the repo name.
@@ -38,8 +46,48 @@ def branch_exists(workspace, repo, branch):
     return out.returncode == 0
 
 
-def create_checkout(workspace, repo, name, branch, base, dry_run):
-    """Create one checkout with worktrunk. Returns its path, or None."""
+def worktree_of(workspace, repo, branch):
+    """The worktree that already holds the branch, or None."""
+    out = subprocess.run(
+        ["git", "-C", os.path.join(workspace, repo), "worktree", "list", "--porcelain"],
+        capture_output=True, text=True)
+    path = None
+    for line in out.stdout.splitlines():
+        if line.startswith("worktree "):
+            path = line[len("worktree "):]
+        elif line == f"branch refs/heads/{branch}":
+            return path
+    return None
+
+
+def checkout_above(path, stop):
+    """The checkout that holds path, searching upward but not past stop."""
+    while path != stop and path != os.path.dirname(path):
+        if is_checkout(path):
+            return path
+        path = os.path.dirname(path)
+    return None
+
+
+def existing_ancestor(path):
+    while not os.path.isdir(path):
+        path = os.path.dirname(path)
+    return path
+
+
+def remove_empty(path, stop):
+    """Remove path and its empty parents, upward but not past stop."""
+    while path != stop and os.path.isdir(path) and not os.listdir(path):
+        os.rmdir(path)
+        path = os.path.dirname(path)
+
+
+def create_checkout(workspace, repo, name, branch, base, source, dry_run):
+    """Create one checkout with worktrunk. Returns its path, or None.
+
+    A source is a branch or pull request that already exists: worktrunk
+    attaches it instead of creating the branch.
+    """
     cwd = primary_worktree(repo, workspace)
     if not cwd:
         print(f"  {repo}: no primary worktree (expected {repo}/main or {repo}/master)",
@@ -48,39 +96,64 @@ def create_checkout(workspace, repo, name, branch, base, dry_run):
 
     target = os.path.join(workspace, "work", name, repo)
     if os.path.isdir(target):
-        print(f"  {repo}: already at {target}")
+        print(f"  {repo}: kept, already at {target}")
         return target
 
-    cmd = ["wt", "--config-set", f'worktree-path="{PATH_TEMPLATE % name}"',
-           "switch", "--create", branch, "--no-cd", "-y"]
-    if base:
-        cmd += ["--base", base]
+    cmd = ["wt", "--config-set", f'worktree-path="{PATH_TEMPLATE % name}"', "switch"]
+    if source:
+        cmd += [source, "--no-cd", "-y"]
+    else:
+        cmd += ["--create", branch, "--no-cd", "-y"]
+        if base:
+            cmd += ["--base", base]
+
+    refusal = None
+    if source:
+        elsewhere = worktree_of(workspace, repo, source)
+        if elsewhere:
+            refusal = f"{source} is already checked out at {elsewhere}"
+    elif branch_exists(workspace, repo, branch):
+        refusal = (f"branch {branch} already exists; run "
+                   f"`workctl new {name} --repo {repo} --from {branch}` to attach it")
+    if refusal:
+        verb = "would refuse: " if dry_run else ""
+        print(f"  {repo}: {verb}{refusal}", file=sys.stderr)
+        return None
 
     if dry_run:
         print(f"  {repo}: would run (in {cwd})")
         print(f"    {' '.join(cmd)}")
         return target
 
-    if branch_exists(workspace, repo, branch):
-        print(f"  {repo}: branch {branch} already exists; "
-              f"run `wt switch {branch}` to attach it", file=sys.stderr)
-        return None
-
     out = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True)
     if out.returncode != 0:
         print(f"  {repo}: {(out.stderr or out.stdout).strip()}", file=sys.stderr)
+        return None
+    if not os.path.isdir(target):
+        # wt switch goes to the worktree a branch already has, wherever it is.
+        print(f"  {repo}: {source} landed elsewhere, not at {target}\n"
+              f"    {(out.stdout or out.stderr).strip()}", file=sys.stderr)
         return None
     print(f"  {repo}: {target}")
     return target
 
 
-def attach_herdr(root, name, checkouts, dry_run):
-    """Create the unit's herdr workspace. Returns (workspace_id, root_pane_id)."""
+def attach_herdr(root, name, existing, workspace, dry_run):
+    """Create the unit's herdr workspace. Returns (workspace_id, root_pane_id).
+
+    An existing unit may already have one, so `workctl go` finds or creates it.
+    """
     if dry_run:
-        print(f"herdr: would create a workspace at {root}")
+        verb = "would focus or create" if existing else "would create"
+        print(f"herdr: {verb} a workspace at {root}")
         return None, None
     if not herdr_running():
         print("herdr: not running; start it and run `workctl go` to attach this unit")
+        return None, None
+
+    if existing:
+        sibling = os.path.join(os.path.dirname(os.path.realpath(__file__)), "workctl_go")
+        subprocess.run([sibling, name, "--root", workspace])
         return None, None
 
     result = herdr(["workspace", "create", "--cwd", root, "--label", name, "--focus"])
@@ -128,7 +201,11 @@ def main():
                     help="repository to include (repeatable); omit for a notes-only unit")
     ap.add_argument("--base", metavar="REF", help="base branch (default: the repo's default)")
     ap.add_argument("--branch", metavar="NAME",
-                    help=f"branch name (default: {BRANCH_PREFIX}<name>)")
+                    help=f"branch name (default: {BRANCH_PREFIX}<name>, "
+                         f"with / in the name replaced by -)")
+    ap.add_argument("--from", dest="source", metavar="REF",
+                    help="attach an existing branch or pull request (pr:N) "
+                         "instead of creating a branch")
     add_root_arg(ap)
     ap.add_argument("--no-herdr", action="store_true", help="do not create a herdr workspace")
     ap.add_argument("--agent", nargs="?", const="claude", metavar="KIND",
@@ -136,6 +213,11 @@ def main():
                     help="launch an agent on the new unit (default claude)")
     ap.add_argument("--dry-run", action="store_true", help="print what would happen")
     args = ap.parse_args()
+
+    if args.source and (args.base or args.branch):
+        ap.error("--from attaches a branch as it is; it takes no --base or --branch")
+    if args.source and not args.repo:
+        ap.error("--from needs a --repo to attach the branch in")
 
     known = bare_repos(args.root)
     if not known:
@@ -148,24 +230,37 @@ def main():
         sys.exit(f"unknown repository: {', '.join(unknown)}\n"
                  f"available: {', '.join(known)}")
 
-    root = os.path.join(args.root, "work", args.name)
-    branch = args.branch or f"{BRANCH_PREFIX}{args.name}"
+    work = os.path.normpath(work_dir(args.root))
+    root = os.path.normpath(os.path.join(work, args.name))
+    branch = args.branch or f"{BRANCH_PREFIX}{args.name.replace('/', '-')}"
+    existing = os.path.isdir(root)
 
-    print(f"{args.name}: {root}")
-    if args.repo:
+    holder = checkout_above(root, work) if args.repo else None
+    if holder:
+        where = "is a checkout" if holder == root else f"sits inside the checkout {holder}"
+        sys.exit(f"{root} {where}; a worktree cannot hold another worktree")
+
+    print(f"{args.name}: {root}" + (" (exists; adding to it)" if existing else ""))
+    if args.source:
+        print(f"from: {args.source}")
+    elif args.repo:
         print(f"branch: {branch}")
 
-    if not args.dry_run:
-        os.makedirs(root, exist_ok=True)
+    created_from = None
+    if not args.dry_run and not existing:
+        created_from = existing_ancestor(root)
+        os.makedirs(root)
 
     checkouts = []
     for repo in args.repo:
         path = create_checkout(args.root, repo, args.name, branch, args.base,
-                               args.dry_run)
+                               args.source, args.dry_run)
         if path:
             checkouts.append(path)
 
     if args.repo and not checkouts:
+        if created_from:
+            remove_empty(root, created_from)
         sys.exit("no checkout was created")
 
     if not args.repo:
@@ -173,7 +268,7 @@ def main():
 
     pane = None
     if not args.no_herdr:
-        _, pane = attach_herdr(root, args.name, checkouts, args.dry_run)
+        _, pane = attach_herdr(root, args.name, existing, args.root, args.dry_run)
 
     if args.agent:
         launch_agent(args.name, args.agent, root, pane, args.dry_run)
