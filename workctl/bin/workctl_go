@@ -20,16 +20,14 @@ from _workctl import WORKSPACE, derive_units, find_unit, herdr, herdr_running
 
 
 def snapshot():
-    """The live session, unwrapped from whatever envelope herdr puts it in."""
-    out = subprocess.run(["herdr", "api", "snapshot"], capture_output=True, text=True)
-    if out.returncode != 0:
+    """The live session, unwrapped from whatever envelope herdr puts it in.
+
+    Always go through the shared helper. A raw `herdr` call talks to the
+    default session, which a stray launch leaves empty.
+    """
+    data = herdr(["api", "snapshot"], quiet=True)
+    if data is None:
         return None
-    try:
-        data = json.loads(out.stdout)
-    except json.JSONDecodeError:
-        return None
-    if isinstance(data, dict) and "result" in data:
-        data = data["result"] or {}
     if isinstance(data, dict) and "snapshot" in data:
         data = data["snapshot"] or {}
     return data if isinstance(data, dict) else None
