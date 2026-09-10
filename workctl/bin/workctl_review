@@ -3,7 +3,11 @@
 # requires-python = ">=3.11"
 # dependencies = []
 # ///
-"""Review one unit as a single diff, across every repository it touches."""
+"""Review one unit as a single diff, across every repository it touches.
+
+Untracked files appear in the branch and working diffs as new files. `git diff`
+alone never lists them, and a settle-time review has to see them.
+"""
 import argparse
 import os
 import subprocess
@@ -29,6 +33,20 @@ def diff_args(checkout, mode):
     return ["diff", base] if base else None
 
 
+def untracked_files(checkout):
+    return run(["git", "-C", checkout, "ls-files", "--others", "--exclude-standard"]).splitlines()
+
+
+def untracked_diff(checkout, prefixes):
+    """One new-file diff per untracked file, in the same format as the rest."""
+    text = ""
+    for path in untracked_files(checkout):
+        # --no-index exits 1 whenever the two sides differ, which is always.
+        text += run(["git", "-C", checkout, "diff", "--no-index"] + prefixes
+                    + ["--", os.devnull, path], allow_failure=True)
+    return text
+
+
 def build_patch(unit, mode, handle):
     """Write one patch covering every checkout. Returns the file count."""
     files = 0
@@ -37,8 +55,10 @@ def build_patch(unit, mode, handle):
         if args is None:
             continue
         label = unit.label_for(checkout)
-        text = run(["git", "-C", checkout] + args
-                   + [f"--src-prefix=a/{label}/", f"--dst-prefix=b/{label}/"])
+        prefixes = [f"--src-prefix=a/{label}/", f"--dst-prefix=b/{label}/"]
+        text = run(["git", "-C", checkout] + args + prefixes)
+        if mode != "staged":
+            text += untracked_diff(checkout, prefixes)
         handle.write(text)
         files += sum(1 for line in text.splitlines() if line.startswith("diff --git "))
     handle.flush()
@@ -55,7 +75,7 @@ def main():
     mode.add_argument("--staged", dest="mode", action="store_const", const="staged",
                       help="staged changes only")
     mode.add_argument("--working", dest="mode", action="store_const", const="working",
-                      help="uncommitted changes only")
+                      help="uncommitted changes only, untracked files included")
     ap.set_defaults(mode="branch")
     args, passthrough = ap.parse_known_args()
 

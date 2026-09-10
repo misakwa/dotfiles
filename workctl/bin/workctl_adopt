@@ -1,0 +1,155 @@
+#!/usr/bin/env -S uv run --script
+# /// script
+# requires-python = ">=3.11"
+# dependencies = []
+# ///
+"""Move a checkout that no unit holds into work/<unit>/<repo>, so the board sees it.
+
+Worktrunk tracks every worktree of a bare repository, but the board reads
+only work/. A checkout at <root>/<repo>/<slug> or <root>/<name>/<repo> is
+invisible to it, and so is any pull request open on it. This moves such a
+checkout with `git worktree move`, which keeps its `.bare/worktrees/*` link
+intact. Agent sessions stay recorded at the old path.
+
+With no path it lists every checkout it could adopt and the unit each would
+get. Nothing on disk changes without --apply.
+"""
+import argparse
+import os
+import subprocess
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
+from _workctl import (Unit, add_root_arg, git_facts, outside_units, primary_worktree,
+                      sessions_for, work_dir)
+
+KINDS = {"claude", "codex", "pi"}
+
+
+def unit_name_for(repo, path):
+    """The unit a checkout would get.
+
+    A sibling at <root>/<repo>/<slug> is named by its own directory. A checkout
+    at <root>/<name>/<repo> is named by the directory above it.
+    """
+    name = os.path.basename(path)
+    return os.path.basename(os.path.dirname(path)) if name == repo else name
+
+
+def candidates(workspace, refresh):
+    """Every checkout outside the model, as (repo, path, branch, unit, skip reason)."""
+    work = os.path.realpath(work_dir(workspace))
+    rows = []
+    for repo, path, item in outside_units(git_facts(workspace, refresh=refresh), workspace):
+        branch = "detached" if (item.get("worktree") or {}).get("detached") else item.get("branch")
+        if path.startswith(work + os.sep):
+            rows.append((repo, path, branch, None,
+                         "already under work/; moving it would flatten its grouping"))
+        else:
+            rows.append((repo, path, branch, unit_name_for(repo, path), None))
+    return rows
+
+
+def changes(checkout):
+    """Lines of `git status --porcelain`, or None when git failed.
+
+    A failed status must not read as clean, so "" and None stay distinct.
+    """
+    out = subprocess.run(["git", "-C", checkout, "status", "--porcelain"],
+                         capture_output=True, text=True)
+    return out.stdout.splitlines() if out.returncode == 0 else None
+
+
+def sessions_at(path):
+    return len(sessions_for(Unit(os.path.basename(path), path, []), KINDS, depth=0))
+
+
+def list_candidates(rows, workspace):
+    if not rows:
+        print("every worktree worktrunk knows sits in a unit; nothing to adopt")
+        return 0
+    for repo, path, branch, unit, why in rows:
+        rel = os.path.relpath(path, workspace)
+        target = f"-> work/{unit}/{repo}" if unit else f"skip: {why}"
+        print(f"  {rel:<60} {branch or '?':<40} {target}")
+    print("\nworkctl adopt <path> [--unit NAME] --apply moves one of them")
+    return 0
+
+
+def adopt(args, rows):
+    path = os.path.realpath(args.path)
+    row = next((r for r in rows if r[1] == path), None)
+    if row is None:
+        sys.exit(f"{args.path} is not a checkout outside the unit model; "
+                 f"`workctl adopt` lists those it knows")
+    repo, _, branch, default, why = row
+    rel = os.path.relpath(path, args.root)
+    if why:
+        sys.exit(f"refusing to adopt {rel}: {why}")
+
+    unit = args.unit or default
+    unit_root = os.path.join(work_dir(args.root), unit)
+    dest = os.path.join(unit_root, repo)
+    if os.path.lexists(dest):
+        sys.exit(f"refusing to adopt {rel}: {dest} already exists")
+
+    lines = changes(path)
+    if lines is None:
+        sys.exit(f"git status failed in {rel}")
+    if lines:
+        print("\n".join("   " + line for line in lines))
+        sys.exit(f"refusing to move {rel} with uncommitted changes; "
+                 f"commit or stash them first")
+
+    print(f"{rel}: {repo} on {branch or '?'}")
+    print(f"mode: {'APPLY' if args.apply else 'DRY RUN, pass --apply to move'}")
+    print(f"   {'move' if args.apply else 'would move'} {rel} -> work/{unit}/{repo}")
+    if os.path.isdir(unit_root):
+        print(f"   joins the existing unit {unit}")
+    left = [n for n in os.listdir(os.path.dirname(path))
+            if n != os.path.basename(path) and not n.startswith(".")]
+    if default == os.path.basename(os.path.dirname(path)) and left:
+        print(f"   {len(left)} other entries stay at {os.path.dirname(path)}")
+    recorded = sessions_at(path)
+    if recorded:
+        print(f"   {recorded} agent session(s) stay recorded at the old path")
+    if not args.apply:
+        return 0
+
+    os.makedirs(unit_root, exist_ok=True)
+    out = subprocess.run(["git", "-C", primary_worktree(repo, args.root) or path,
+                          "worktree", "move", path, dest],
+                         capture_output=True, text=True)
+    if out.returncode != 0:
+        print(out.stderr.strip(), file=sys.stderr)
+        return 1
+    # The cached git facts still place the checkout at the old path.
+    git_facts(args.root, refresh=True)
+    print(f"\n{rel}: adopted as {unit}")
+    return 0
+
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__,
+                                 formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("path", nargs="?", help="checkout to adopt; omit to list the candidates")
+    add_root_arg(ap)
+    ap.add_argument("--unit", metavar="NAME",
+                    help="unit to move it under (default: named from the source directory)")
+    ap.add_argument("--apply", action="store_true",
+                    help="really move the checkout; without it nothing changes")
+    ap.add_argument("--refresh", action="store_true",
+                    help="ignore the cached git facts")
+    args = ap.parse_args()
+
+    if not os.path.isdir(work_dir(args.root)):
+        sys.exit(f"no work/ directory under {args.root}")
+
+    rows = candidates(args.root, args.refresh)
+    if not args.path:
+        return list_candidates(rows, args.root)
+    return adopt(args, rows)
+
+
+if __name__ == "__main__":
+    sys.exit(main())

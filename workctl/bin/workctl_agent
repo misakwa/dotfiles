@@ -16,7 +16,7 @@ import shutil
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
-from _workctl import add_root_arg, find_unit, sessions_for
+from _workctl import Unit, add_root_arg, find_unit, sessions_for
 
 KINDS = ("claude", "codex", "pi")
 
@@ -37,6 +37,19 @@ def newest_kind(rows, at_root_only=True):
     return min(usable, key=lambda r: r["age"])["kind"]
 
 
+def outside_twin(name, workspace):
+    """A same-named directory outside work/, with the sessions recorded in it.
+
+    A checkout that predates the unit model can sit at <root>/<name>/<repo>
+    with a long history, while work/<name> holds a small leftover. Starting
+    in the leftover would silently begin a fresh session.
+    """
+    path = os.path.join(workspace, name)
+    if not os.path.isdir(path) or os.path.realpath(path) == os.path.realpath(workspace):
+        return path, []
+    return path, sessions_for(Unit(name, path, []), set(KINDS))
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -50,12 +63,23 @@ def main():
     args, passthrough = ap.parse_known_args()
 
     unit = find_unit(args.name, args.root)
+    twin, twin_rows = outside_twin(args.name, args.root)
     if not unit:
+        if twin_rows:
+            sys.exit(f"no unit named {args.name} under {args.root}/work, but {twin} "
+                     f"holds {len(twin_rows)} session(s). Start the agent there yourself, "
+                     f"or bring its checkout in with `workctl adopt`.")
         sys.exit(f"no unit named {args.name} under {args.root}/work")
     if not os.path.isdir(unit.root):
         sys.exit(f"{unit.name} has no directory at {unit.root}")
 
     rows = sessions_for(unit, set(KINDS))
+    if twin_rows:
+        sys.exit(f"{args.name} names two directories, and workctl will not pick one:\n"
+                 f"  {unit.root}  ({len(rows)} session(s))\n"
+                 f"  {twin}  ({len(twin_rows)} session(s))\n"
+                 f"Start the agent in the one you mean, or bring the checkout under "
+                 f"{twin} in with `workctl adopt`.")
     kind = args.kind or newest_kind(rows) or "claude"
     if not shutil.which(kind):
         sys.exit(f"{kind} is not on PATH")

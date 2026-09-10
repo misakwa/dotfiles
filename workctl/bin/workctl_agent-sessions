@@ -18,8 +18,8 @@ import sys
 import time
 
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
-from _workctl import (CLAUDE_ROOT, CODEX_ROOT, DEPTH, PI_ROOT, add_root_arg,
-                      candidates, derive_units, find_unit, sessions_for, slug)
+from _workctl import (CLAUDE_ROOT, DEPTH, PI_ROOT, Unit, add_root_arg, derive_units,
+                      find_unit, git_facts, outside_units, sessions_for, slug)
 
 
 def move_to_root(unit, rows, apply_):
@@ -74,6 +74,25 @@ def orphans(workspace, kinds):
     return found
 
 
+def outside(workspace, kinds, depth):
+    """Sessions recorded at checkouts that no unit holds, or just above one.
+
+    A checkout at <root>/<name>/<repo> records its sessions at <name>, the
+    way a unit does, so scan from there. A sibling at <root>/<repo>/<slug>
+    has nothing above it but the repository, so scan from the checkout.
+    """
+    root = os.path.realpath(workspace)
+    scanned = {}
+    for repo, path, _ in outside_units(git_facts(workspace), workspace):
+        parent = os.path.dirname(path)
+        base = path if parent in (root, os.path.join(root, repo)) else parent
+        scanned.setdefault(base, Unit(os.path.relpath(base, root), base, []))
+    rows = []
+    for base in sorted(scanned):
+        rows += sessions_for(scanned[base], kinds, depth)
+    return rows
+
+
 def _first_existing(work, tail):
     """A unit name may hold a hyphen, so a flattened slug is ambiguous.
 
@@ -91,10 +110,10 @@ def _first_existing(work, tail):
     return os.path.join(work, tail)
 
 
-def render(unit_name, rows, root):
+def render(unit_name, rows, base):
     print(unit_name)
     for row in rows:
-        rel = os.path.relpath(row["cwd"], os.path.join(root, "work"))
+        rel = os.path.relpath(row["cwd"], base)
         mark = "" if row["at_root"] else "  below root"
         print(f"  {row['kind']:<7} {rel:<58} {row['age']:>4}d  "
               f"{row['size'] // 1024:>6}K{mark}")
@@ -116,10 +135,26 @@ def main():
     ap.add_argument("--apply", action="store_true", help="perform the move")
     ap.add_argument("--orphans", action="store_true",
                     help="show sessions whose unit directory is gone")
+    ap.add_argument("--outside", action="store_true",
+                    help="show sessions at checkouts worktrunk tracks but no unit holds")
     ap.add_argument("--json", action="store_true")
     args = ap.parse_args()
 
     kinds = set(args.kind) or {"claude", "codex", "pi"}
+
+    if args.outside:
+        rows = outside(args.root, kinds, args.depth)
+        if args.json:
+            json.dump(rows, sys.stdout, indent=1)
+            return 0
+        if not rows:
+            print("no sessions outside the unit model")
+            return 0
+        for name in sorted({r["unit"] for r in rows}):
+            render(name, [r for r in rows if r["unit"] == name], args.root)
+        print(f"\n{len(rows)} sessions at {len({r['unit'] for r in rows})} directories "
+              f"outside the unit model; `workctl adopt` lists their checkouts")
+        return 0
 
     if args.orphans:
         rows = orphans(args.root, kinds)
@@ -174,7 +209,7 @@ def main():
         print("no sessions found")
         return 0
     for name in sorted(n for n, rows in found.items() if rows):
-        render(name, found[name], args.root)
+        render(name, found[name], os.path.join(args.root, "work"))
     below = sum(1 for rows in found.values() for r in rows if not r["at_root"])
     print(f"\n{total} sessions across {sum(1 for r in found.values() if r)} units; "
           f"{below} below a unit root")

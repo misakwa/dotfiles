@@ -212,10 +212,10 @@ def once(args, ttl_ms):
 
     prs = {}
     for owner, repos in wanted_repos.items():
-        for key, pr in pr_facts(sorted(repos), owner=owner).items():
+        for key, pr in pr_facts(sorted(repos), owner=owner, refresh=args.refresh).items():
             prs[(owner,) + key] = pr
 
-    git = git_facts(args.root)
+    git = git_facts(args.root, refresh=args.refresh)
     state = {wid: unit_state(unit, remotes, prs) for wid, unit in matched.items()}
     wanted = {(repo, pr["number"]) for found in state.values() for repo, pr in found}
     checks = failing_checks(wanted, ignored=IGNORED_CHECKS | set(args.ignore_check))
@@ -260,6 +260,8 @@ def main():
                     help="check name to treat as noise (repeatable)")
     ap.add_argument("--dry-run", action="store_true",
                     help="print the herdr calls instead of making them")
+    ap.add_argument("--refresh", action="store_true",
+                    help="ignore the cached git and pull request facts")
     ap.set_defaults(interval=0)
     args = ap.parse_args()
 
