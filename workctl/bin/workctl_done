@@ -72,12 +72,15 @@ def pull_requests(repo, branch, owner):
         return []
 
 
-def board_rows(path, workspace):
+def board_rows(path, workspace, refresh=False):
     if path:
         with open(path, encoding="utf-8") as handle:
             return json.load(handle)
-    text = run([os.path.join(os.path.dirname(os.path.realpath(__file__)), "workctl_board"),
-                workspace, "--json"])
+    cmd = [os.path.join(os.path.dirname(os.path.realpath(__file__)), "workctl_board"),
+           workspace, "--json"]
+    if refresh:
+        cmd.append("--refresh")
+    text = run(cmd)
     if not text:
         return None
     try:
@@ -150,6 +153,7 @@ def confirm(question):
 def step_working_tree(unit):
     print("\n1. uncommitted changes")
     stop = False
+    dirty = []
     for checkout in unit.checkouts:
         label = unit.label_for(checkout)
         status = git(checkout, "status", "--porcelain")
@@ -162,6 +166,7 @@ def step_working_tree(unit):
             print(f"   {label}: clean")
             continue
         stop = True
+        dirty.append(checkout)
         plural = "change" if len(lines) == 1 else "changes"
         print(f"   {label}: {len(lines)} uncommitted {plural}")
         for line in lines[:5]:
@@ -169,8 +174,12 @@ def step_working_tree(unit):
         if len(lines) > 5:
             print(f"     ... and {len(lines) - 5} more")
     if stop:
+        # `review --working` is `git diff`, which never lists untracked files.
         print(f"\nstopped at step 1. Review them first:\n"
               f"  workctl review {unit.name} --working")
+        for checkout in dirty:
+            print(f"  git -C {checkout} status --porcelain")
+        print("The review shows tracked changes only; git status lists untracked files too.")
     return stop
 
 
@@ -282,6 +291,21 @@ def step_archive(unit, workspace, records, apply_):
     reviews = capture_hunk(unit)
     dest = os.path.join(workspace, ".archive", unit.name)
 
+    hidden = unit.hidden_checkouts()
+    if hidden:
+        held = sorted({unit.label_for(p).split(os.sep)[0] for p in hidden})
+        n = len(hidden)
+        sys.stdout.flush()
+        print(f"\nstopped at step 5. {', '.join(held)} "
+              f"{'holds' if len(held) == 1 else 'hold'} {n} worktree"
+              + ("" if n == 1 else "s") + " the unit does not:", file=sys.stderr)
+        for path in hidden:
+            print(f"  {path}", file=sys.stderr)
+        print("Moving them into the archive breaks their .bare/worktrees links.\n"
+              "Move them out of the unit, or settle them by hand, then run "
+              "workctl done again.", file=sys.stderr)
+        return False
+
     if not entries and not records and not reviews:
         print("   no unversioned payload and no agent session; nothing to archive")
         return True
@@ -365,6 +389,30 @@ def step_remove(unit, workspace, apply_):
     return not stop
 
 
+def report_branches(facts, workspace, apply_):
+    """Name every branch `wt remove` left behind, with the command that deletes it.
+
+    `--reap` deletes a merged branch only. A closed or abandoned branch stays,
+    and the instruction is always to delete the worktree and the branch.
+    """
+    kept = []
+    for fact in facts:
+        repo, branch = fact["repo"], fact["branch"]
+        if not repo or not branch:
+            continue
+        home = os.path.join(workspace, repo)
+        if apply_ and not (git(home, "rev-parse", "--verify", "--quiet",
+                               f"refs/heads/{branch}") or "").strip():
+            continue
+        kept.append((home, branch))
+    if not kept:
+        return
+    print("   branches wt remove " + ("left behind" if apply_ else "keeps unless merged")
+          + "; delete each with")
+    for home, branch in kept:
+        print(f"     git -C {home} branch -D {branch}")
+
+
 def step_workspace(unit, workspace, spaces, apply_):
     print("\n7. herdr workspace")
     if not herdr_running():
@@ -418,6 +466,8 @@ def main():
                     help="settle even though a pull request is still open")
     ap.add_argument("--board", metavar="FILE",
                     help="read the board from this JSON file instead of running it")
+    ap.add_argument("--refresh", action="store_true",
+                    help="rebuild the board's git and pull request caches first")
     args = ap.parse_args()
 
     if args.apply and args.dry_run:
@@ -436,7 +486,7 @@ def main():
     print(f"{unit.name}: {unit.root}")
     print(f"mode: {'APPLY' if args.apply else 'DRY RUN, pass --apply to settle'}")
 
-    rows = board_rows(args.board, args.root)
+    rows = board_rows(args.board, args.root, args.refresh)
     row = next((r for r in rows if r["name"] == unit.name), None) if rows else None
     if row is None:
         found = "the board could not be read" if rows is None else "it is not on the board"
@@ -446,8 +496,12 @@ def main():
         print(f"bucket: unknown, {found} (--force-bucket)")
     elif row["bucket"] != "SETTLE":
         if not args.force_bucket:
+            # The board caches git and pull request facts, so a branch merged
+            # a minute ago still reads as WAITING. Refresh before forcing.
+            hint = ("" if args.refresh or args.board else
+                    "If that changed just now, pass --refresh to reread it. ")
             sys.exit(f"refusing to settle {unit.name}: it is in the "
-                     f"{row['bucket']} bucket, not SETTLE. "
+                     f"{row['bucket']} bucket, not SETTLE. {hint}"
                      f"Pass --force-bucket to settle it anyway.")
         print(f"bucket: {row['bucket']}, not SETTLE (--force-bucket)")
     else:
@@ -489,6 +543,7 @@ def main():
         return 1
     if not step_remove(unit, args.root, args.apply):
         return 1
+    report_branches(facts, args.root, args.apply)
     step_workspace(unit, args.root, spaces, args.apply)
 
     print(f"\n{unit.name}: {'settled' if args.apply else 'dry run complete'}")

@@ -21,9 +21,12 @@ sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
 from _workctl import add_root_arg, run
 
 
-def board_rows(workspace):
+def board_rows(workspace, refresh=False):
     here = os.path.dirname(os.path.realpath(__file__))
-    text = run([os.path.join(here, "workctl_board"), workspace, "--json"])
+    cmd = [os.path.join(here, "workctl_board"), workspace, "--json"]
+    if refresh:
+        cmd.append("--refresh")
+    text = run(cmd)
     if not text:
         return None
     try:
@@ -77,19 +80,24 @@ def main():
                     help="pass --force-bucket to each `workctl done`")
     ap.add_argument("--allow-open-pr", action="store_true",
                     help="pass --allow-open-pr to each `workctl done`")
+    ap.add_argument("--refresh", action="store_true",
+                    help="rebuild the board's git and pull request caches first")
     args = ap.parse_args()
 
     if args.apply and args.dry_run:
         sys.exit("--apply and --dry-run contradict each other")
 
     wanted = args.bucket.upper()
-    rows = board_rows(args.root)
+    rows = board_rows(args.root, args.refresh)
     if rows is None:
         sys.exit("could not read the board")
 
     group = sorted((r for r in rows if r["bucket"] == wanted), key=lambda r: r["age"])
     print(f"{len(group)} units in {wanted}")
-    print(f"mode: {'APPLY' if args.apply else 'DRY RUN, pass --apply to settle'}\n")
+    print(f"mode: {'APPLY' if args.apply else 'DRY RUN, pass --apply to settle'}")
+    if not args.yes and not sys.stdin.isatty():
+        print("no terminal to ask on: every unit is skipped unless --yes is passed")
+    print()
     for row in group:
         print(f"  {row['age']:>4}d  {row['name']:<52} {count(row)}")
     if not group:
