@@ -11,7 +11,7 @@ import sys
 import tempfile
 
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
-from _workctl import WORKSPACE, find_unit, run
+from _workctl import add_root_arg, find_unit, run
 
 
 def merge_base(checkout):
@@ -48,7 +48,7 @@ def build_patch(unit, mode, handle):
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("name", help="unit name, as it appears under work/")
-    ap.add_argument("--workspace", default=WORKSPACE)
+    add_root_arg(ap)
     mode = ap.add_mutually_exclusive_group()
     mode.add_argument("--branch", dest="mode", action="store_const", const="branch",
                       help="changes since the merge base, committed and uncommitted (default)")
@@ -59,9 +59,9 @@ def main():
     ap.set_defaults(mode="branch")
     args, passthrough = ap.parse_known_args()
 
-    unit = find_unit(args.name, args.workspace)
+    unit = find_unit(args.name, args.root)
     if not unit:
-        sys.exit(f"no unit named {args.name} under {args.workspace}/work")
+        sys.exit(f"no unit named {args.name} under {args.root}/work")
     if not unit.checkouts:
         sys.exit(f"{args.name} holds only notes; there is nothing to diff")
 

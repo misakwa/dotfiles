@@ -109,6 +109,17 @@ def bare_repos(workspace=None):
     return [d for d in subdirs(root) if os.path.isdir(os.path.join(root, d, ".bare"))]
 
 
+def add_root_arg(ap):
+    """Register the shared --root flag.
+
+    Named root, not workspace: workctl also creates a herdr workspace per
+    unit, and one flag called --workspace read as that one.
+    """
+    ap.add_argument("--root", dest="root", default=WORKSPACE, metavar="DIR",
+                    help="directory holding the bare repositories "
+                         "(default: %(default)s)")
+
+
 def primary_worktree(repo, workspace=None):
     """The repository's own default-branch checkout, where `wt` commands run."""
     root = workspace or WORKSPACE

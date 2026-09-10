@@ -18,8 +18,9 @@ import sys
 import time
 
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
-from _workctl import (CLAUDE_ROOT, CODEX_ROOT, DEPTH, PI_ROOT, WORKSPACE,
+from _workctl import (CLAUDE_ROOT, CODEX_ROOT, DEPTH, PI_ROOT, add_root_arg,
                       candidates, derive_units, find_unit, sessions_for, slug)
+
 
 def move_to_root(unit, rows, apply_):
     """Refile a session under the unit root so Claude started there sees it."""
@@ -90,10 +91,10 @@ def _first_existing(work, tail):
     return os.path.join(work, tail)
 
 
-def render(unit_name, rows):
+def render(unit_name, rows, root):
     print(unit_name)
     for row in rows:
-        rel = os.path.relpath(row["cwd"], os.path.join(WORKSPACE, "work"))
+        rel = os.path.relpath(row["cwd"], os.path.join(root, "work"))
         mark = "" if row["at_root"] else "  below root"
         print(f"  {row['kind']:<7} {rel:<58} {row['age']:>4}d  "
               f"{row['size'] // 1024:>6}K{mark}")
@@ -103,7 +104,7 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("name", nargs="?", help="unit name; omit to scan every unit")
-    ap.add_argument("--workspace", default=WORKSPACE)
+    add_root_arg(ap)
     ap.add_argument("--kind", action="append", choices=["claude", "codex", "pi"],
                     default=[], help="limit to one agent (repeatable)")
     ap.add_argument("--depth", type=int, default=DEPTH,
@@ -121,7 +122,7 @@ def main():
     kinds = set(args.kind) or {"claude", "codex", "pi"}
 
     if args.orphans:
-        rows = orphans(args.workspace, kinds)
+        rows = orphans(args.root, kinds)
         if args.json:
             json.dump([{"kind": k, "unit": n, "dir": d, "sessions": c}
                        for k, n, d, c in rows], sys.stdout, indent=1)
@@ -135,14 +136,14 @@ def main():
         return 0
 
     if args.name:
-        unit = find_unit(args.name, args.workspace)
+        unit = find_unit(args.name, args.root)
         if not unit:
-            sys.exit(f"no unit named {args.name} under {args.workspace}/work")
+            sys.exit(f"no unit named {args.name} under {args.root}/work")
         units = [unit]
     elif args.move_to_root:
         sys.exit("--move-to-root needs a unit name; refusing to refile every unit at once")
     else:
-        units = derive_units(args.workspace)
+        units = derive_units(args.root)
 
     found = {u.name: sessions_for(u, kinds, args.depth) for u in units}
     if args.below_root:
@@ -173,7 +174,7 @@ def main():
         print("no sessions found")
         return 0
     for name in sorted(n for n, rows in found.items() if rows):
-        render(name, found[name])
+        render(name, found[name], args.root)
     below = sum(1 for rows in found.values() for r in rows if not r["at_root"])
     print(f"\n{total} sessions across {sum(1 for r in found.values() if r)} units; "
           f"{below} below a unit root")

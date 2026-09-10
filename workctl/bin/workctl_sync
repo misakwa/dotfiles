@@ -22,9 +22,9 @@ import sys
 import time
 
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
-from _workctl import (WORKSPACE, IGNORED_CHECKS, derive_units, failing_checks,
-                      git_facts, herdr, herdr_running, is_dirty, parallel,
-                      pr_facts, run)
+from _workctl import (IGNORED_CHECKS, add_root_arg, derive_units, failing_checks,
+                      git_facts, herdr, herdr_running, is_dirty, parallel, pr_facts,
+                      run)
 
 SOURCE = "workctl"
 REMOTE_URL = re.compile(r"[:/]([^/:]+)/([^/]+?)(?:\.git)?$")
@@ -198,7 +198,7 @@ def once(args, ttl_ms):
         print("herdr: no snapshot; nothing to sync", file=sys.stderr)
         return 1
 
-    units = derive_units(args.workspace)
+    units = derive_units(args.root)
     matched = match_units(units, workspace_dirs(session))
     if not matched:
         print("no herdr workspace sits at a unit root; nothing to sync")
@@ -215,7 +215,7 @@ def once(args, ttl_ms):
         for key, pr in pr_facts(sorted(repos), owner=owner).items():
             prs[(owner,) + key] = pr
 
-    git = git_facts(args.workspace)
+    git = git_facts(args.root)
     state = {wid: unit_state(unit, remotes, prs) for wid, unit in matched.items()}
     wanted = {(repo, pr["number"]) for found in state.values() for repo, pr in found}
     checks = failing_checks(wanted, ignored=IGNORED_CHECKS | set(args.ignore_check))
@@ -248,7 +248,7 @@ def seconds(text):
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--workspace", default=WORKSPACE)
+    add_root_arg(ap)
     mode = ap.add_mutually_exclusive_group()
     mode.add_argument("--once", dest="interval", action="store_const", const=0,
                       help="sync a single time and exit (default)")
@@ -272,8 +272,8 @@ def main():
     if ttl_ms and not 1 <= ttl_ms <= MAX_TTL_MS:
         sys.exit(f"--ttl-ms takes 0, or 1 to {MAX_TTL_MS}")
 
-    if not os.path.isdir(os.path.join(args.workspace, "work")):
-        sys.exit(f"no work/ directory under {args.workspace}")
+    if not os.path.isdir(os.path.join(args.root, "work")):
+        sys.exit(f"no work/ directory under {args.root}")
 
     if not herdr_running():
         print("herdr is not running; nothing to sync")

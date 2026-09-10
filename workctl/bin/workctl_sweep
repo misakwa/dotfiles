@@ -18,7 +18,7 @@ import sys
 import tempfile
 
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
-from _workctl import WORKSPACE, run
+from _workctl import add_root_arg, run
 
 
 def board_rows(workspace):
@@ -51,7 +51,7 @@ def ask(question):
 
 def settle(name, board, args):
     cmd = [os.path.join(os.path.dirname(os.path.realpath(__file__)), "workctl_done"),
-           name, "--workspace", args.workspace, "--board", board]
+           name, "--root", args.root, "--board", board]
     if args.apply:
         cmd += ["--apply", "--yes"]
     if args.force_bucket:
@@ -68,7 +68,7 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--bucket", default="SETTLE", help="bucket to sweep (default: SETTLE)")
-    ap.add_argument("--workspace", default=WORKSPACE)
+    add_root_arg(ap)
     ap.add_argument("--apply", action="store_true",
                     help="really settle each unit; without it nothing changes")
     ap.add_argument("--dry-run", action="store_true", help="report only (the default)")
@@ -83,7 +83,7 @@ def main():
         sys.exit("--apply and --dry-run contradict each other")
 
     wanted = args.bucket.upper()
-    rows = board_rows(args.workspace)
+    rows = board_rows(args.root)
     if rows is None:
         sys.exit("could not read the board")
 

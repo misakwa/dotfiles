@@ -10,9 +10,8 @@ import os
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
-from _workctl import (WORKSPACE, IGNORED_CHECKS, agents_by_unit, derive_units,
-                      failing_checks, find_unit, git_facts, is_dirty, pr_facts,
-                      run)
+from _workctl import (IGNORED_CHECKS, add_root_arg, agents_by_unit, derive_units,
+                      failing_checks, find_unit, git_facts, is_dirty, pr_facts, run)
 
 
 def human_size(size):
@@ -164,18 +163,18 @@ def render(report):
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("name", help="unit name, as it appears under work/")
-    ap.add_argument("--workspace", default=WORKSPACE)
+    add_root_arg(ap)
     ap.add_argument("--ignore-check", action="append", default=[],
                     help="check name to treat as noise (repeatable)")
     ap.add_argument("--json", action="store_true")
     args = ap.parse_args()
 
-    units = derive_units(args.workspace)
-    unit = find_unit(args.name, args.workspace)
+    units = derive_units(args.root)
+    unit = find_unit(args.name, args.root)
     if not unit:
-        sys.exit(f"no unit named {args.name} under {args.workspace}/work")
+        sys.exit(f"no unit named {args.name} under {args.root}/work")
 
-    report = collect(unit, units, args.workspace, args.ignore_check)
+    report = collect(unit, units, args.root, args.ignore_check)
     if args.json:
         json.dump(report, sys.stdout, indent=1)
         print()

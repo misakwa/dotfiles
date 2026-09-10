@@ -16,7 +16,7 @@ import subprocess
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
-from _workctl import WORKSPACE, derive_units, find_unit, herdr, herdr_running
+from _workctl import add_root_arg, derive_units, find_unit, herdr, herdr_running
 
 
 def snapshot():
@@ -100,17 +100,17 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("name", nargs="?", help="unit name; omit to list every unit")
-    ap.add_argument("--workspace", default=WORKSPACE)
+    add_root_arg(ap)
     args = ap.parse_args()
 
     if not args.name:
-        for unit in derive_units(args.workspace):
+        for unit in derive_units(args.root):
             print(unit.name)
         return 0
 
-    unit = find_unit(args.name, args.workspace)
+    unit = find_unit(args.name, args.root)
     if not unit:
-        sys.exit(f"no unit named {args.name} under {args.workspace}/work")
+        sys.exit(f"no unit named {args.name} under {args.root}/work")
 
     if not herdr_running():
         sys.exit("herdr is not running; start it with `herdr`, then run this again")

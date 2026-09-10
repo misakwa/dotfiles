@@ -5,6 +5,9 @@
 # ///
 """Create a unit of work: one branch and checkout per repository.
 
+The name argument supplies all three names: the directory work/<name>, the
+branch <prefix><name>, and the label of the herdr workspace. Pass it once.
+
 Drives worktrunk to create each checkout, so worktrunk's hooks, base-branch
 handling, and gates all apply. Overrides the worktree path for each call so the
 checkouts land at work/<name>/<repo> rather than under worktrunk's own
@@ -19,8 +22,8 @@ import subprocess
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
-from _workctl import (WORKSPACE, BRANCH_PREFIX, bare_repos, herdr,
-                      herdr_running, primary_worktree)
+from _workctl import (BRANCH_PREFIX, add_root_arg, bare_repos, herdr, herdr_running,
+                      primary_worktree)
 
 # Worktrunk cannot strip a prefix from a branch name in a path template, so the
 # unit name is substituted here and the template supplies only the repo name.
@@ -126,7 +129,7 @@ def main():
     ap.add_argument("--base", metavar="REF", help="base branch (default: the repo's default)")
     ap.add_argument("--branch", metavar="NAME",
                     help=f"branch name (default: {BRANCH_PREFIX}<name>)")
-    ap.add_argument("--workspace", default=WORKSPACE)
+    add_root_arg(ap)
     ap.add_argument("--no-herdr", action="store_true", help="do not create a herdr workspace")
     ap.add_argument("--agent", nargs="?", const="claude", metavar="KIND",
                     choices=["claude", "codex", "pi"],
@@ -134,13 +137,18 @@ def main():
     ap.add_argument("--dry-run", action="store_true", help="print what would happen")
     args = ap.parse_args()
 
-    known = bare_repos(args.workspace)
+    known = bare_repos(args.root)
+    if not known:
+        sys.exit(f"no bare repository under {args.root}\n"
+                 f"--root is the directory that holds them. The unit name is "
+                 f"the positional argument and takes no flag.")
+
     unknown = [r for r in args.repo if r not in known]
     if unknown:
         sys.exit(f"unknown repository: {', '.join(unknown)}\n"
                  f"available: {', '.join(known)}")
 
-    root = os.path.join(args.workspace, "work", args.name)
+    root = os.path.join(args.root, "work", args.name)
     branch = args.branch or f"{BRANCH_PREFIX}{args.name}"
 
     print(f"{args.name}: {root}")
@@ -152,7 +160,7 @@ def main():
 
     checkouts = []
     for repo in args.repo:
-        path = create_checkout(args.workspace, repo, args.name, branch, args.base,
+        path = create_checkout(args.root, repo, args.name, branch, args.base,
                                args.dry_run)
         if path:
             checkouts.append(path)

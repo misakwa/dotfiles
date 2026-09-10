@@ -22,7 +22,7 @@ import subprocess
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
-from _workctl import (OWNER, WORKSPACE, agents_by_unit, derive_units, herdr,
+from _workctl import (OWNER, add_root_arg, agents_by_unit, derive_units, herdr,
                       herdr_running, primary_worktree, run, work_dir)
 
 SETTLED_STATES = ("idle", "done")
@@ -405,7 +405,7 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("name", help="unit name, as it appears on the board")
-    ap.add_argument("--workspace", default=WORKSPACE)
+    add_root_arg(ap)
     ap.add_argument("--owner", default=OWNER)
     ap.add_argument("--apply", action="store_true",
                     help="really settle the unit; without it nothing changes")
@@ -423,7 +423,7 @@ def main():
     if args.apply and args.dry_run:
         sys.exit("--apply and --dry-run contradict each other")
 
-    units = derive_units(args.workspace)
+    units = derive_units(args.root)
     unit = next((u for u in units if u.name == args.name), None)
     if not unit:
         children = sorted(u.name for u in units if u.name.startswith(args.name + "/"))
@@ -431,12 +431,12 @@ def main():
             sys.exit(f"{args.name} holds sub-units, not checkouts of its own. "
                      f"Settle each one:\n"
                      + "\n".join(f"  workctl done {c}" for c in children))
-        sys.exit(f"no unit named {args.name} under {work_dir(args.workspace)}")
+        sys.exit(f"no unit named {args.name} under {work_dir(args.root)}")
 
     print(f"{unit.name}: {unit.root}")
     print(f"mode: {'APPLY' if args.apply else 'DRY RUN, pass --apply to settle'}")
 
-    rows = board_rows(args.board, args.workspace)
+    rows = board_rows(args.board, args.root)
     row = next((r for r in rows if r["name"] == unit.name), None) if rows else None
     if row is None:
         found = "the board could not be read" if rows is None else "it is not on the board"
@@ -478,18 +478,18 @@ def main():
             print("stopped; nothing was changed")
             return 1
 
-    records, spaces, busy = step_agents(unit, args.workspace, args.apply)
+    records, spaces, busy = step_agents(unit, args.root, args.apply)
     if busy:
         print("\nstopped at step 4. An agent is still running in "
               + ", ".join(busy) + "\nAnswer it or stop it, then settle the unit.",
               file=sys.stderr)
         return 1
 
-    if not step_archive(unit, args.workspace, records, args.apply):
+    if not step_archive(unit, args.root, records, args.apply):
         return 1
-    if not step_remove(unit, args.workspace, args.apply):
+    if not step_remove(unit, args.root, args.apply):
         return 1
-    step_workspace(unit, args.workspace, spaces, args.apply)
+    step_workspace(unit, args.root, spaces, args.apply)
 
     print(f"\n{unit.name}: {'settled' if args.apply else 'dry run complete'}")
     return 0

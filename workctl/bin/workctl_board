@@ -86,7 +86,9 @@ def render(unit):
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("workspace", nargs="?", default=WORKSPACE)
+    ap.add_argument("root", nargs="?", default=WORKSPACE,
+                    metavar="DIR",
+                    help="directory holding the bare repositories")
     ap.add_argument("--bucket", action="append", help="show only these buckets")
     ap.add_argument("--ignore-check", action="append", default=[],
                     help="check name to treat as noise (repeatable)")
@@ -95,13 +97,13 @@ def main():
                     help="ignore the cache and re-read worktrunk and GitHub")
     args = ap.parse_args()
 
-    if not os.path.isdir(os.path.join(args.workspace, "work")):
-        sys.exit(f"no work/ directory under {args.workspace}")
+    if not os.path.isdir(os.path.join(args.root, "work")):
+        sys.exit(f"no work/ directory under {args.root}")
 
-    repos = bare_repos(args.workspace)
-    units = derive_units(args.workspace)
-    git = git_facts(args.workspace, repos, refresh=args.refresh)
-    prs = pr_facts(repos, workspace=args.workspace, refresh=args.refresh)
+    repos = bare_repos(args.root)
+    units = derive_units(args.root)
+    git = git_facts(args.root, repos, refresh=args.refresh)
+    prs = pr_facts(repos, workspace=args.root, refresh=args.refresh)
     agents = agents_by_unit(units)
 
     rows = [inspect(u, git, prs, agents) for u in units]
@@ -126,7 +128,7 @@ def main():
         return 0
 
     wanted = [b.upper() for b in args.bucket] if args.bucket else BUCKETS
-    print(f"{len(rows)} units in {args.workspace}\n")
+    print(f"{len(rows)} units in {args.root}\n")
     for name in BUCKETS:
         group = sorted((r for r in rows if r["bucket"] == name), key=lambda r: r["age"])
         if name not in wanted or not group:

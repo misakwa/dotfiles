@@ -18,7 +18,8 @@ import sys
 import textwrap
 
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
-from _workctl import WORKSPACE, IGNORED_CHECKS, failing_checks, find_unit, parallel, run
+from _workctl import (IGNORED_CHECKS, add_root_arg, failing_checks,
+                      find_unit, parallel, run)
 
 PR_FIELDS = "number,title,url,reviewDecision,isDraft,headRefName"
 
@@ -225,7 +226,7 @@ def main():
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
     ap.add_argument("name", help="unit name, as it appears under work/")
-    ap.add_argument("--workspace", default=WORKSPACE)
+    add_root_arg(ap)
     ap.add_argument("--owner", help="override the owner read from the git remote")
     ap.add_argument(
         "--threads",
@@ -251,9 +252,9 @@ def main():
     ap.add_argument("--json", action="store_true")
     args = ap.parse_args()
 
-    unit = find_unit(args.name, args.workspace)
+    unit = find_unit(args.name, args.root)
     if not unit:
-        sys.exit(f"no unit named {args.name} under {args.workspace}/work")
+        sys.exit(f"no unit named {args.name} under {args.root}/work")
 
     prs = unit_prs(unit, args.owner)
     want_threads = args.threads or args.all_threads or args.draft
