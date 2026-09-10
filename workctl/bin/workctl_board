@@ -10,15 +10,29 @@ import os
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
-from _workctl import (WORKSPACE, IGNORED_CHECKS, agents_by_unit, bare_repos,
-                      derive_units, failing_checks, git_facts, is_dirty, pr_facts,
+from _workctl import (IGNORED_CHECKS, add_root_arg, agents_by_unit, bare_repos,
+                      derive_units, failing_checks, find_unit, git_facts, is_dirty,
+                      is_own_pr, outside_units, pr_author, pr_facts,
                       unresolved_threads)
 
-BUCKETS = ["BLOCKED", "READY", "MERGEABLE", "BROKEN", "WAITING", "ACTIVE",
-           "SETTLE", "COLD", "NOTES", "UNKNOWN"]
+BUCKETS = ["BLOCKED", "READY", "MERGEABLE", "BROKEN", "REVIEW", "WAITING",
+           "ACTIVE", "SETTLE", "COLD", "NOTES", "UNKNOWN"]
+
+# Checkouts on disk that no unit holds. Not a bucket: the board cannot rank a
+# checkout it cannot attribute, so they print after the buckets instead.
+OUTSIDE = "OUTSIDE"
 
 
-def inspect(unit, git, prs, agents):
+def hidden_below(unit, held):
+    """Checkouts under the unit that no unit at all holds.
+
+    `hidden_checkouts` compares against the unit's own checkouts only, so a
+    parent would count its sub-units' checkouts, and those are on the board.
+    """
+    return [p for p in unit.hidden_checkouts() if os.path.realpath(p) not in held]
+
+
+def inspect(unit, git, prs, agents, held):
     trees = [git[p] for p in (os.path.realpath(c) for c in unit.checkouts) if p in git]
 
     found, dirty, ahead, integrated = [], False, 0, 0
@@ -34,10 +48,27 @@ def inspect(unit, git, prs, agents):
     return dict(name=unit.name, root=unit.root, age=unit.age_days, prs=found,
                 failures=[], dirty=dirty, ahead=ahead, integrated=integrated,
                 n_checkouts=len(unit.checkouts), n_known=len(trees),
-                stray=len(unit.checkouts) - len(trees), threads=0,
+                stray=len(unit.checkouts) - len(trees),
+                hidden=len(hidden_below(unit, held)), threads=0,
                 agents=[{"name": a.get("name"), "kind": a.get("agent"),
                          "status": a.get("agent_status"),
                          "pane": a.get("pane_id")} for a in live])
+
+
+def inspect_outside(repo, path, item, prs, root):
+    """A row for a checkout no unit holds, in the shape of a unit row.
+
+    `workctl done` and `workctl sweep` read the same JSON list and look rows
+    up by name and bucket, so the shape has to match theirs.
+    """
+    pr = prs.get((repo, item.get("branch")))
+    return dict(name=os.path.relpath(path, root), root=path, age=None,
+                prs=[(repo, pr)] if pr else [], failures=[], dirty=is_dirty(item),
+                ahead=(item.get("default_branch") or {}).get("ahead") or 0,
+                integrated=int(item["display"]["state"] == "integrated"),
+                n_checkouts=1, n_known=1, stray=0, hidden=0, threads=0, agents=[],
+                repo=repo, branch=item.get("branch"),
+                state=item["display"]["state"], bucket=OUTSIDE)
 
 
 def bucket(unit):
@@ -47,12 +78,14 @@ def bucket(unit):
     if "done" in states:
         return "READY"
     if unit["prs"]:
+        if not any(is_own_pr(pr) for _, pr in unit["prs"]):
+            return "REVIEW"
         if unit["failures"]:
             return "BROKEN"
         if any(pr.get("reviewDecision") == "APPROVED" for _, pr in unit["prs"]):
             return "MERGEABLE"
         return "WAITING"
-    if unit["n_checkouts"] == 0:
+    if unit["n_checkouts"] == 0 and not unit["hidden"]:
         return "NOTES"
     if unit["n_known"] == 0:
         return "UNKNOWN"
@@ -65,18 +98,22 @@ def bucket(unit):
     return "COLD"
 
 
+def render_pr(repo, pr):
+    state = "draft" if pr["isDraft"] else (pr.get("reviewDecision") or "pending").lower()
+    text = f"{repo}#{pr['number']}/{state}"
+    return text if is_own_pr(pr) else f"{text} by {pr_author(pr)}"
+
+
 def render(unit):
-    prs = " ".join(
-        f"{repo}#{pr['number']}"
-        f"/{'draft' if pr['isDraft'] else (pr.get('reviewDecision') or 'pending').lower()}"
-        for repo, pr in unit["prs"])
-    bits = [prs] if prs else []
+    bits = [render_pr(repo, pr) for repo, pr in unit["prs"]]
     if unit["failures"]:
         bits.append("FAIL=" + ",".join(unit["failures"]))
     # A checkout from a repository outside the workspace: the unit's state is
     # only partly known, so say so rather than rank it as if it were complete.
     if unit["stray"]:
         bits.append(f"?{unit['stray']}/{unit['n_checkouts']} outside workspace")
+    if unit["hidden"]:
+        bits.append(f"+{unit['hidden']} checkouts deeper than the unit")
     if unit["threads"]:
         bits.append(f"{unit['threads']} unanswered")
     for agent in unit["agents"]:
@@ -84,12 +121,32 @@ def render(unit):
     return f"  {unit['age']:>4}d  {unit['name']:<52} {' '.join(bits)}".rstrip()
 
 
+def outside_group(row, repos):
+    top = row["name"].split(os.sep)[0]
+    if top == "work":
+        return "deeper than any unit under work/"
+    if top in repos:
+        return "beside the repository's own checkouts"
+    return "outside work/"
+
+
+def render_outside(row):
+    bits = [render_pr(repo, pr) for repo, pr in row["prs"]] + [row["state"]]
+    if row["dirty"]:
+        bits.append("dirty")
+    return f"     -   {row['name']:<52} {' '.join(bits)}".rstrip()
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("root", nargs="?", default=WORKSPACE,
-                    metavar="DIR",
-                    help="directory holding the bare repositories")
-    ap.add_argument("--bucket", action="append", help="show only these buckets")
+    # `workctl done` and `workctl sweep` still pass the root as the positional.
+    ap.add_argument("dir", nargs="?", metavar="DIR",
+                    help="the same as --root; a unit name is a mistake here")
+    add_root_arg(ap)
+    ap.add_argument("--bucket", action="append", type=str.upper,
+                    choices=BUCKETS + [OUTSIDE], metavar="NAME",
+                    help="show only these sections (repeatable): "
+                         + ", ".join(BUCKETS + [OUTSIDE]))
     ap.add_argument("--ignore-check", action="append", default=[],
                     help="check name to treat as noise (repeatable)")
     ap.add_argument("--json", action="store_true")
@@ -97,6 +154,13 @@ def main():
                     help="ignore the cache and re-read worktrunk and GitHub")
     args = ap.parse_args()
 
+    if args.dir and not os.path.isdir(os.path.join(args.dir, "work")):
+        if find_unit(args.dir, args.root):
+            sys.exit(f"{args.dir} is a unit, not a workspace. "
+                     f"For one unit run: workctl show {args.dir}")
+        sys.exit(f"no work/ directory under {args.dir}")
+    if args.dir:
+        args.root = args.dir
     if not os.path.isdir(os.path.join(args.root, "work")):
         sys.exit(f"no work/ directory under {args.root}")
 
@@ -106,7 +170,10 @@ def main():
     prs = pr_facts(repos, workspace=args.root, refresh=args.refresh)
     agents = agents_by_unit(units)
 
-    rows = [inspect(u, git, prs, agents) for u in units]
+    held = {os.path.realpath(c) for u in units for c in u.checkouts}
+    rows = [inspect(u, git, prs, agents, held) for u in units]
+    outside = [inspect_outside(repo, path, item, prs, args.root)
+               for repo, path, item in outside_units(git, args.root)]
     matched = {(repo, pr["number"]) for r in rows for repo, pr in r["prs"]}
     checks = failing_checks(matched, ignored=IGNORED_CHECKS | set(args.ignore_check))
     for row in rows:
@@ -124,10 +191,10 @@ def main():
                              for repo, pr in row["prs"])
 
     if args.json:
-        json.dump(rows, sys.stdout, indent=1)
+        json.dump(rows + outside, sys.stdout, indent=1)
         return 0
 
-    wanted = [b.upper() for b in args.bucket] if args.bucket else BUCKETS
+    wanted = args.bucket or BUCKETS + [OUTSIDE]
     print(f"{len(rows)} units in {args.root}\n")
     for name in BUCKETS:
         group = sorted((r for r in rows if r["bucket"] == name), key=lambda r: r["age"])
@@ -136,6 +203,16 @@ def main():
         print(f"== {name} ({len(group)})")
         for row in group:
             print(render(row))
+        print()
+
+    if OUTSIDE in wanted and outside:
+        print(f"== {OUTSIDE} ({len(outside)})  checkouts on no unit; "
+              "the board cannot rank them")
+        for group in dict.fromkeys(outside_group(r, repos) for r in outside):
+            print(f"  {group}")
+            for row in outside:
+                if outside_group(row, repos) == group:
+                    print(render_outside(row))
         print()
     return 0
 

@@ -11,7 +11,8 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
 from _workctl import (IGNORED_CHECKS, add_root_arg, agents_by_unit, derive_units,
-                      failing_checks, find_unit, git_facts, is_dirty, pr_facts, run)
+                      failing_checks, find_unit, git_facts, is_checkout, is_dirty,
+                      pr_author, pr_facts, run)
 
 
 def human_size(size):
@@ -22,14 +23,21 @@ def human_size(size):
 
 
 def note_files(root):
-    """Every unversioned file at the unit root. Directories are not notes."""
+    """Every unversioned file at the unit root. Directories are not notes.
+
+    When the root is itself a checkout, the repository's own tracked files sit
+    there too, and README.md is not a note.
+    """
     try:
         entries = sorted(os.scandir(root), key=lambda entry: entry.name)
     except OSError:
         return []
+    tracked = set()
+    if is_checkout(root):
+        tracked = set(run(["git", "-C", root, "ls-files"]).splitlines())
     notes = []
     for entry in entries:
-        if entry.name == ".git" or entry.is_dir():
+        if entry.name == ".git" or entry.is_dir() or entry.name in tracked:
             continue
         try:
             size = entry.stat().st_size
@@ -93,12 +101,12 @@ def inspect_checkout(unit, checkout, git):
     return row
 
 
-def collect(unit, units, workspace, ignore):
-    git = git_facts(workspace)
+def collect(unit, units, workspace, ignore, refresh=False):
+    git = git_facts(workspace, refresh=refresh)
     rows = [inspect_checkout(unit, c, git) for c in unit.checkouts]
 
     repos = sorted({row["repo"] for row in rows if row["repo"]})
-    prs = pr_facts(repos, workspace=workspace) if repos else {}
+    prs = pr_facts(repos, workspace=workspace, refresh=refresh) if repos else {}
     for row in rows:
         row["pr"] = prs.get((row["repo"], row["branch"]))
 
@@ -108,8 +116,13 @@ def collect(unit, units, workspace, ignore):
         if row["pr"]:
             row["failures"] = checks.get((row["repo"], row["pr"]["number"]), [])
 
+    # `hidden_checkouts` compares against this unit alone, so a parent would
+    # list its sub-units' checkouts; those are units of their own.
+    held = {os.path.realpath(c) for u in units for c in u.checkouts}
+    hidden = [os.path.relpath(p, unit.root) for p in unit.hidden_checkouts()
+              if os.path.realpath(p) not in held]
     return dict(name=unit.name, root=unit.root, age=unit.age_days,
-                checkouts=rows, notes=note_files(unit.root),
+                checkouts=rows, notes=note_files(unit.root), hidden=hidden,
                 agents=[dict(name=a.get("name"), kind=a.get("agent"),
                              status=a.get("agent_status"), pane=a.get("pane_id"),
                              cwd=a.get("foreground_cwd") or a.get("cwd"))
@@ -132,7 +145,9 @@ def render_checkout(row):
         print("    no open pull request")
         return
     review = "draft" if pr.get("isDraft") else (pr.get("reviewDecision") or "pending").lower()
-    print(f"    {row['repo']}#{pr['number']}  {review}  {pr.get('url', '')}".rstrip())
+    author = pr_author(pr)
+    print(f"    {row['repo']}#{pr['number']}  {review}  "
+          f"{'by ' + author + '  ' if author else ''}{pr.get('url', '')}".rstrip())
     if row["failures"]:
         print(f"    checks fail: {', '.join(row['failures'])}")
     else:
@@ -147,8 +162,13 @@ def render(report):
     print(f"\ncheckouts ({len(report['checkouts'])})")
     for row in report["checkouts"]:
         render_checkout(row)
-    if not report["checkouts"]:
+    if not report["checkouts"] and not report["hidden"]:
         print("  none; this unit holds only notes")
+    if report["hidden"]:
+        print(f"\ncheckouts deeper than the unit ({len(report['hidden'])}); "
+              "workctl does not track these")
+        for path in report["hidden"]:
+            print(f"  {path}")
 
     print(f"\nagents ({len(report['agents'])})")
     for agent in report["agents"]:
@@ -167,6 +187,8 @@ def main():
     ap.add_argument("--ignore-check", action="append", default=[],
                     help="check name to treat as noise (repeatable)")
     ap.add_argument("--json", action="store_true")
+    ap.add_argument("--refresh", action="store_true",
+                    help="ignore the cache and re-read worktrunk and GitHub")
     args = ap.parse_args()
 
     units = derive_units(args.root)
@@ -174,7 +196,7 @@ def main():
     if not unit:
         sys.exit(f"no unit named {args.name} under {args.root}/work")
 
-    report = collect(unit, units, args.root, args.ignore_check)
+    report = collect(unit, units, args.root, args.ignore_check, refresh=args.refresh)
     if args.json:
         json.dump(report, sys.stdout, indent=1)
         print()

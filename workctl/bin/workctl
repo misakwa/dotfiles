@@ -66,6 +66,16 @@ def describe(name):
     return ""
 
 
+def is_unit(name):
+    """Whether the workspace holds a unit by this name."""
+    sys.path.insert(0, own_dir())
+    try:
+        from _workctl import find_unit
+    except ImportError:
+        return False
+    return find_unit(name) is not None
+
+
 def usage(stream=sys.stdout):
     print("usage: workctl [<command>] [args...]", file=stream)
     print(f"\nWith no command, workctl runs {DEFAULT}.\n", file=stream)
@@ -92,6 +102,10 @@ def main(argv):
 
     path = find(name)
     if not path:
+        if is_unit(name):
+            print(f"workctl: {name} is a unit, not a command. "
+                  f"Run: workctl show {name}", file=sys.stderr)
+            return 2
         print(f"workctl: no such command: {name}\n", file=sys.stderr)
         usage(sys.stderr)
         return 2

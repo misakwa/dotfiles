@@ -158,6 +158,16 @@ class Unit:
         `.bare/worktrees/*` link of a live worktree.
         """
         known = {os.path.realpath(p) for p in self.checkouts}
+        # `derive_units` models a sub-unit's checkouts one level deeper. Those
+        # belong to that sub-unit, so they are not hidden from this one.
+        for child in subdirs(self.root):
+            child_path = os.path.join(self.root, child)
+            if is_checkout(child_path):
+                continue
+            for grand in subdirs(child_path):
+                deep = os.path.join(child_path, grand)
+                if is_checkout(deep):
+                    known.add(os.path.realpath(deep))
         return [p for p in all_checkouts(self.root)
                 if os.path.realpath(p) not in known]
 
