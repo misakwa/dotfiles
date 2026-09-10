@@ -1,0 +1,99 @@
+#!/usr/bin/env python3
+"""Git clean filter: keep only the keys a manifest claims, drop the rest.
+
+Usage: keep-owned-keys <manifest> <json|toml>
+
+Reads a config file on stdin and writes it to stdout with every key that the
+manifest does not list removed. The harnesses write their own state into the
+same files they read, so this keeps that state out of the repository while
+leaving the working file untouched.
+
+A manifest lists one key path per line. Blank lines and #-comments are ignored.
+A dotted path claims a nested key, and claiming a key claims everything under
+it: "env" keeps the whole table, "hooks.Stop" keeps only that one hook list.
+"""
+import json
+import re
+import sys
+
+TABLE = re.compile(r"^\s*\[\[?(.+?)\]\]?\s*(?:#.*)?$")
+ASSIGN = re.compile(r'^\s*(?:"([^"]+)"|([^\s=]+))\s*=')
+
+
+def read_manifest(path):
+    owned = []
+    with open(path, encoding="utf-8") as handle:
+        for line in handle:
+            line = line.split("#", 1)[0].strip()
+            if line:
+                owned.append(line)
+    return owned
+
+
+def claimed(path, owned):
+    return any(path == key or path.startswith(key + ".") for key in owned)
+
+
+def leads_to_claim(path, owned):
+    return any(key.startswith(path + ".") for key in owned)
+
+
+def prune_json(node, owned, prefix=""):
+    kept = {}
+    for key, value in node.items():
+        path = f"{prefix}{key}"
+        if claimed(path, owned):
+            kept[key] = value
+        elif isinstance(value, dict) and leads_to_claim(path, owned):
+            inner = prune_json(value, owned, path + ".")
+            if inner:
+                kept[key] = inner
+    return kept
+
+
+def filter_json(text, owned):
+    pruned = prune_json(json.loads(text), owned)
+    return json.dumps(pruned, indent=2, sort_keys=True) + "\n"
+
+
+def filter_toml(text, owned):
+    kept, keeping, top_level = [], True, True
+    for line in text.splitlines():
+        table = TABLE.match(line)
+        if table:
+            keeping = claimed(table.group(1), owned)
+            top_level = False
+        elif top_level:
+            assign = ASSIGN.match(line)
+            if assign and not claimed(assign.group(1) or assign.group(2), owned):
+                continue
+        if keeping:
+            kept.append(line)
+    return collapse(kept)
+
+
+def collapse(lines):
+    out = []
+    for line in lines:
+        if not line.strip() and (not out or not out[-1].strip()):
+            continue
+        out.append(line)
+    return "\n".join(out).rstrip("\n") + "\n"
+
+
+def main():
+    if len(sys.argv) != 3:
+        sys.exit("usage: keep-owned-keys <manifest> <json|toml>")
+    manifest, form = sys.argv[1], sys.argv[2]
+    owned = read_manifest(manifest)
+    text = sys.stdin.read()
+    if form == "json":
+        sys.stdout.write(filter_json(text, owned))
+    elif form == "toml":
+        sys.stdout.write(filter_toml(text, owned))
+    else:
+        sys.exit(f"unknown format: {form}")
+
+
+if __name__ == "__main__":
+    main()

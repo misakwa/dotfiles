@@ -1,0 +1,5 @@
+# Keys I author in ~/.codex/local.config.toml. Codex writes its state into the
+# highest active user layer, which is this file whenever --profile local runs.
+model
+model_provider
+model_providers

@@ -49,7 +49,7 @@ EMACSDIR   ?= $(TARGET)/.config/emacs
 DOOMLOCAL  ?= $(TARGET)/.local/share/doom-local
 DOOM_REPO  ?= https://github.com/doomemacs/core
 
-.PHONY: help stow unstow restow check prune list .submodules render enable enable-launchd enable-systemd doom-install doom-reclone
+.PHONY: help stow unstow restow check prune list .submodules render git-filters enable enable-launchd enable-systemd doom-install doom-reclone
 
 help: ## Show this help
 	@echo "Usage: make <target>"
@@ -58,6 +58,7 @@ help: ## Show this help
 	@echo "  unstow         Remove all package symlinks"
 	@echo "  restow         Alias for stow"
 	@echo "  check          Dry-run stow for all packages (no changes)"
+	@echo "  git-filters    Register the clean filters for harness-written configs"
 	@echo "  prune          Report symlinks stranded by deleted files (no changes)"
 	@echo "  prune FORCE=1  Delete what prune reported"
 	@echo "  render         Render launchd plists from *.plist.in templates"
@@ -79,8 +80,19 @@ render: $(PLIST_OUT) ## Render launchd plist templates (@HOME@ -> $HOME)
 launchd/Library/LaunchAgents/%.plist: launchd/Library/LaunchAgents/%.plist.in
 	sed 's|@HOME@|$(TARGET)|g' $< > $@
 
-stow: .submodules render ## Symlink all packages
+stow: .submodules render git-filters ## Symlink all packages
 	$(STOW) -R $(STOW_FLAGS) $(PACKAGES)
+
+# Claude Code and Codex write state into the configs they read. These clean
+# filters strip it on the way into git; git config is per-clone, so this runs
+# from `stow` rather than living in a tracked file.
+git-filters: ## Register the git clean filters for harness-written configs
+	@$(GIT) config filter.owned-claude-settings.clean \
+		"scripts/keep-owned-keys scripts/owned-keys/claude-settings.txt json"
+	@$(GIT) config filter.owned-codex-config.clean \
+		"scripts/keep-owned-keys scripts/owned-keys/codex-config.txt toml"
+	@$(GIT) config filter.owned-codex-local-config.clean \
+		"scripts/keep-owned-keys scripts/owned-keys/codex-local-config.txt toml"
 
 unstow: ## Remove all package symlinks
 	$(STOW) -D $(STOW_FLAGS) $(PACKAGES)

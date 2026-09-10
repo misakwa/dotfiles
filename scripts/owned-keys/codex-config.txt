@@ -1,0 +1,8 @@
+# Keys I author in ~/.codex/config.toml. Codex writes hooks.state, projects,
+# and tui.model_availability_nux into the same file; those stay out of git.
+sandbox_mode
+approval_policy
+model_reasoning_effort
+personality
+web_search
+features
