@@ -107,6 +107,13 @@ def create_checkout(workspace, repo, name, branch, base, source, dry_run):
         if base:
             cmd += ["--base", base]
 
+    # `wt switch <branch>` resolves origin/<branch> from local refs only, and
+    # the branch to attach was usually pushed from somewhere else.
+    if source and not source.startswith("pr:") and not dry_run:
+        subprocess.run(["git", "-C", os.path.join(workspace, repo),
+                        "fetch", "origin", "--prune", "--quiet"],
+                       capture_output=True, text=True)
+
     refusal = None
     if source:
         elsewhere = worktree_of(workspace, repo, source)
@@ -122,6 +129,8 @@ def create_checkout(workspace, repo, name, branch, base, source, dry_run):
 
     if dry_run:
         print(f"  {repo}: would run (in {cwd})")
+        if source and not source.startswith("pr:"):
+            print(f"    git -C {os.path.join(workspace, repo)} fetch origin --prune")
         print(f"    {' '.join(cmd)}")
         return target
 
