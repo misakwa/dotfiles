@@ -22,8 +22,9 @@ import subprocess
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
-from _workctl import (OWNER, add_root_arg, agents_by_unit, derive_units, herdr,
-                      herdr_running, primary_worktree, run, work_dir)
+from _workctl import (OWNER, add_root_arg, agents_by_unit, all_checkouts,
+                      derive_units, herdr, herdr_running, primary_worktree, run,
+                      work_dir)
 
 SETTLED_STATES = ("idle", "done")
 PR_FIELDS = "number,state,mergedAt,url,isDraft,reviewDecision"
@@ -92,8 +93,12 @@ def board_rows(path, workspace, refresh=False):
 # --- the unit's own files ---------------------------------------------------
 
 def payload_entries(unit):
-    """Every entry at the unit root that is not a checkout and holds no checkout."""
-    checkouts = [os.path.realpath(c) for c in unit.checkouts]
+    """Every entry at the unit root that is not a checkout and holds no checkout.
+
+    Every checkout on disk counts, not only the ones the unit holds: a sub-unit
+    is live work, and moving it into the archive breaks its worktree link.
+    """
+    checkouts = [os.path.realpath(c) for c in all_checkouts(unit.root)]
     if os.path.realpath(unit.root) in checkouts:
         return []
     found = []
