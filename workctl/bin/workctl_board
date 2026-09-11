@@ -10,10 +10,11 @@ import os
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
-from _workctl import (IGNORED_CHECKS, add_root_arg, agents_by_unit, bare_repos,
-                      derive_units, failing_checks, find_unit, git_facts, is_dirty,
-                      is_own_pr, outside_units, pr_author, pr_facts,
-                      unresolved_threads)
+from _workctl import (IGNORED_CHECKS, add_repo_scope_arg, add_root_arg,
+                      agents_by_unit, derive_units, failing_checks, find_unit,
+                      git_facts, is_dirty, is_own_pr, outside_units, pr_author,
+                      pr_facts, resolve_root, scan_repos, unresolved_threads,
+                      work_dir)
 
 BUCKETS = ["BLOCKED", "READY", "MERGEABLE", "BROKEN", "REVIEW", "WAITING",
            "ACTIVE", "SETTLE", "COLD", "NOTES", "UNKNOWN"]
@@ -108,10 +109,10 @@ def render(unit):
     bits = [render_pr(repo, pr) for repo, pr in unit["prs"]]
     if unit["failures"]:
         bits.append("FAIL=" + ",".join(unit["failures"]))
-    # A checkout from a repository outside the workspace: the unit's state is
+    # A checkout from a repository the board did not scan: the unit's state is
     # only partly known, so say so rather than rank it as if it were complete.
     if unit["stray"]:
-        bits.append(f"?{unit['stray']}/{unit['n_checkouts']} outside workspace")
+        bits.append(f"?{unit['stray']}/{unit['n_checkouts']} repos not scanned")
     if unit["hidden"]:
         bits.append(f"+{unit['hidden']} checkouts deeper than the unit")
     if unit["threads"]:
@@ -121,13 +122,27 @@ def render(unit):
     return f"  {unit['age']:>4}d  {unit['name']:<52} {' '.join(bits)}".rstrip()
 
 
-def outside_group(row, repos):
+def outside_group(row, repos, work):
     top = row["name"].split(os.sep)[0]
-    if top == "work":
-        return "deeper than any unit under work/"
+    if top == work:
+        return f"deeper than any unit under {work}/"
     if top in repos:
-        return "beside the repository's own checkouts"
-    return "outside work/"
+        return "inside a repository, on no unit"
+    return f"outside {work}/"
+
+
+def ordered(rows):
+    """A bucket's rows, youngest first, with each parent's sub-units together.
+
+    Ranking a sub-unit by its own age alone scatters `INC-355/a` and
+    `INC-355/b` to opposite ends of the bucket, and they are one piece of work.
+    """
+    youngest = {}
+    for row in rows:
+        top = row["name"].split("/")[0]
+        youngest[top] = min(youngest.get(top, row["age"]), row["age"])
+    return sorted(rows, key=lambda r: (youngest[r["name"].split("/")[0]],
+                                       r["name"].split("/")[0], r["name"]))
 
 
 def render_outside(row):
@@ -143,6 +158,7 @@ def main():
     ap.add_argument("dir", nargs="?", metavar="DIR",
                     help="the same as --root; a unit name is a mistake here")
     add_root_arg(ap)
+    add_repo_scope_arg(ap)
     ap.add_argument("--bucket", action="append", type=str.upper,
                     choices=BUCKETS + [OUTSIDE], metavar="NAME",
                     help="show only these sections (repeatable): "
@@ -153,18 +169,20 @@ def main():
     ap.add_argument("--refresh", action="store_true",
                     help="ignore the cache and re-read worktrunk and GitHub")
     args = ap.parse_args()
+    args.root = resolve_root(args.root)
 
-    if args.dir and not os.path.isdir(os.path.join(args.dir, "work")):
+    if args.dir and not os.path.isdir(work_dir(args.dir)):
         if find_unit(args.dir, args.root):
-            sys.exit(f"{args.dir} is a unit, not a workspace. "
+            sys.exit(f"{args.dir} is a unit, not a root. "
                      f"For one unit run: workctl show {args.dir}")
-        sys.exit(f"no work/ directory under {args.dir}")
+        sys.exit(f"no work folder at {work_dir(args.dir)}")
     if args.dir:
-        args.root = args.dir
-    if not os.path.isdir(os.path.join(args.root, "work")):
-        sys.exit(f"no work/ directory under {args.root}")
+        args.root = resolve_root(args.dir)
+    work = work_dir(args.root)
+    if not os.path.isdir(work):
+        sys.exit(f"no work folder at {work}")
 
-    repos = bare_repos(args.root)
+    repos = scan_repos(args.root, args.all_repos)
     units = derive_units(args.root)
     git = git_facts(args.root, repos, refresh=args.refresh)
     prs = pr_facts(repos, workspace=args.root, refresh=args.refresh)
@@ -175,7 +193,8 @@ def main():
     outside = [inspect_outside(repo, path, item, prs, args.root)
                for repo, path, item in outside_units(git, args.root)]
     matched = {(repo, pr["number"]) for r in rows for repo, pr in r["prs"]}
-    checks = failing_checks(matched, ignored=IGNORED_CHECKS | set(args.ignore_check))
+    checks = failing_checks(matched, ignored=IGNORED_CHECKS | set(args.ignore_check),
+                            root=args.root)
     for row in rows:
         row["failures"] = sorted({n for repo, pr in row["prs"]
                                   for n in checks.get((repo, pr["number"]), [])})
@@ -185,7 +204,7 @@ def main():
     # board is about to tell you to merge, and each lookup costs a request.
     ready = [(repo, pr["number"]) for r in rows if r["bucket"] == "MERGEABLE"
              for repo, pr in r["prs"]]
-    threads = unresolved_threads(ready) if ready else {}
+    threads = unresolved_threads(ready, root=args.root) if ready else {}
     for row in rows:
         row["threads"] = sum(threads.get((repo, pr["number"]), 0)
                              for repo, pr in row["prs"])
@@ -197,7 +216,7 @@ def main():
     wanted = args.bucket or BUCKETS + [OUTSIDE]
     print(f"{len(rows)} units in {args.root}\n")
     for name in BUCKETS:
-        group = sorted((r for r in rows if r["bucket"] == name), key=lambda r: r["age"])
+        group = ordered([r for r in rows if r["bucket"] == name])
         if name not in wanted or not group:
             continue
         print(f"== {name} ({len(group)})")
@@ -206,12 +225,13 @@ def main():
         print()
 
     if OUTSIDE in wanted and outside:
-        print(f"== {OUTSIDE} ({len(outside)})  checkouts on no unit; "
+        folder = os.path.basename(work)
+        print(f"== {OUTSIDE} ({len(outside)})  checkouts that no unit holds; "
               "the board cannot rank them")
-        for group in dict.fromkeys(outside_group(r, repos) for r in outside):
+        for group in dict.fromkeys(outside_group(r, repos, folder) for r in outside):
             print(f"  {group}")
             for row in outside:
-                if outside_group(row, repos) == group:
+                if outside_group(row, repos, folder) == group:
                     print(render_outside(row))
         print()
     return 0

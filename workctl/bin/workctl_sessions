@@ -18,8 +18,9 @@ import sys
 import time
 
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
-from _workctl import (CLAUDE_ROOT, DEPTH, PI_ROOT, Unit, add_root_arg, derive_units,
-                      find_unit, git_facts, outside_units, sessions_for, slug)
+from _workctl import (CLAUDE_ROOT, DEPTH, PI_ROOT, Unit, add_repo_scope_arg,
+                      add_root_arg, derive_units, find_unit, git_facts,
+                      outside_units, resolve_root, sessions_for, slug, work_dir)
 
 
 def move_to_root(unit, rows, apply_):
@@ -59,7 +60,7 @@ def orphans(workspace, kinds):
     Settling a unit removes its checkouts and its directory. The agent history
     stays behind, and nothing else will ever mention it again.
     """
-    work = os.path.join(workspace, "work")
+    work = work_dir(workspace)
     marker = slug(work) + "-"
     found = []
     if "claude" in kinds and os.path.isdir(CLAUDE_ROOT):
@@ -74,7 +75,7 @@ def orphans(workspace, kinds):
     return found
 
 
-def outside(workspace, kinds, depth):
+def outside(workspace, kinds, depth, all_repos=False):
     """Sessions recorded at checkouts that no unit holds, or just above one.
 
     A checkout at <root>/<name>/<repo> records its sessions at <name>, the
@@ -83,7 +84,8 @@ def outside(workspace, kinds, depth):
     """
     root = os.path.realpath(workspace)
     scanned = {}
-    for repo, path, _ in outside_units(git_facts(workspace), workspace):
+    git = git_facts(workspace, all_repos=all_repos)
+    for repo, path, _ in outside_units(git, workspace):
         parent = os.path.dirname(path)
         base = path if parent in (root, os.path.join(root, repo)) else parent
         scanned.setdefault(base, Unit(os.path.relpath(base, root), base, []))
@@ -124,6 +126,7 @@ def main():
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("name", nargs="?", help="unit name; omit to scan every unit")
     add_root_arg(ap)
+    add_repo_scope_arg(ap)
     ap.add_argument("--kind", action="append", choices=["claude", "codex", "pi"],
                     default=[], help="limit to one agent (repeatable)")
     ap.add_argument("--depth", type=int, default=DEPTH,
@@ -136,14 +139,15 @@ def main():
     ap.add_argument("--orphans", action="store_true",
                     help="show sessions whose unit directory is gone")
     ap.add_argument("--outside", action="store_true",
-                    help="show sessions at checkouts worktrunk tracks but no unit holds")
+                    help="show sessions at checkouts that no unit holds")
     ap.add_argument("--json", action="store_true")
     args = ap.parse_args()
+    args.root = resolve_root(args.root)
 
     kinds = set(args.kind) or {"claude", "codex", "pi"}
 
     if args.outside:
-        rows = outside(args.root, kinds, args.depth)
+        rows = outside(args.root, kinds, args.depth, args.all_repos)
         if args.json:
             json.dump(rows, sys.stdout, indent=1)
             return 0
@@ -173,7 +177,7 @@ def main():
     if args.name:
         unit = find_unit(args.name, args.root)
         if not unit:
-            sys.exit(f"no unit named {args.name} under {args.root}/work")
+            sys.exit(f"no unit named {args.name} under {work_dir(args.root)}")
         units = [unit]
     elif args.move_to_root:
         sys.exit("--move-to-root needs a unit name; refusing to refile every unit at once")
@@ -209,7 +213,7 @@ def main():
         print("no sessions found")
         return 0
     for name in sorted(n for n, rows in found.items() if rows):
-        render(name, found[name], os.path.join(args.root, "work"))
+        render(name, found[name], work_dir(args.root))
     below = sum(1 for rows in found.values() for r in rows if not r["at_root"])
     print(f"\n{total} sessions across {sum(1 for r in found.values() if r)} units; "
           f"{below} below a unit root")

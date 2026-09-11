@@ -24,7 +24,7 @@ import time
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
 from _workctl import (IGNORED_CHECKS, add_root_arg, derive_units, failing_checks,
                       git_facts, herdr, herdr_running, is_dirty, parallel, pr_facts,
-                      run)
+                      resolve_root, run, work_dir)
 
 SOURCE = "workctl"
 REMOTE_URL = re.compile(r"[:/]([^/:]+)/([^/]+?)(?:\.git)?$")
@@ -212,13 +212,24 @@ def once(args, ttl_ms):
 
     prs = {}
     for owner, repos in wanted_repos.items():
-        for key, pr in pr_facts(sorted(repos), owner=owner, refresh=args.refresh).items():
+        for key, pr in pr_facts(sorted(repos), owner=owner,
+                                workspace=args.root, refresh=args.refresh).items():
             prs[(owner,) + key] = pr
 
     git = git_facts(args.root, refresh=args.refresh)
     state = {wid: unit_state(unit, remotes, prs) for wid, unit in matched.items()}
-    wanted = {(repo, pr["number"]) for found in state.values() for repo, pr in found}
-    checks = failing_checks(wanted, ignored=IGNORED_CHECKS | set(args.ignore_check))
+    # The owner of each pull request is already known, read from the checkout's
+    # own remote, so group the check calls by it rather than resolve it again.
+    owners = {value[1]: value[0] for value in remotes.values() if value}
+    wanted = {}
+    for found in state.values():
+        for repo, pr in found:
+            wanted.setdefault(owners.get(repo), set()).add((repo, pr["number"]))
+    ignored = IGNORED_CHECKS | set(args.ignore_check)
+    checks = {}
+    for owner, keys in wanted.items():
+        checks.update(failing_checks(keys, owner=owner, ignored=ignored,
+                                     root=args.root))
 
     sent = 0
     for wid, unit in sorted(matched.items(), key=lambda pair: pair[1].name):
@@ -264,6 +275,7 @@ def main():
                     help="ignore the cached git and pull request facts")
     ap.set_defaults(interval=0)
     args = ap.parse_args()
+    args.root = resolve_root(args.root)
 
     if args.ttl_ms is not None:
         ttl_ms = args.ttl_ms
@@ -274,8 +286,8 @@ def main():
     if ttl_ms and not 1 <= ttl_ms <= MAX_TTL_MS:
         sys.exit(f"--ttl-ms takes 0, or 1 to {MAX_TTL_MS}")
 
-    if not os.path.isdir(os.path.join(args.root, "work")):
-        sys.exit(f"no work/ directory under {args.root}")
+    if not os.path.isdir(work_dir(args.root)):
+        sys.exit(f"no work folder at {work_dir(args.root)}")
 
     if not herdr_running():
         print("herdr is not running; nothing to sync")

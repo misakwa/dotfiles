@@ -5,23 +5,24 @@ their own directory on sys.path first:
 
     import os, sys
     sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
-    from _workctl import Unit, derive_units, workspace_root
+    from _workctl import Unit, derive_units, resolve_root
 
 `realpath` matters: the commands are reached through symlinks in ~/bin, and the
 module lives beside the real files.
+
+A root is any directory holding repositories beside a work folder. A repository
+is either the bare layout, `<root>/<repo>/.bare` plus worktrees, or a plain
+clone at `<root>/<repo>`. Units live at `<root>/<work>/<unit>/<repo>`.
 """
+import argparse
 import concurrent.futures as futures
 import hashlib
 import json
 import os
 import subprocess
+import sys
 import time
-
-WORKSPACE = os.environ.get("WORKCTL_WORKSPACE",
-                           os.path.expanduser("~/Projects/vectara-bare"))
-BRANCH_PREFIX = os.environ.get("WORKCTL_BRANCH_PREFIX", "misakwa/")
-OWNER = os.environ.get("WORKCTL_OWNER", "vectara")
-AUTHOR = os.environ.get("WORKCTL_AUTHOR", "misakwa")
+import tomllib
 
 # The unit model holds checkouts at depth 1 and 2. Scan deeper than that so a
 # command can see the checkouts the model does not hold, rather than treating
@@ -44,6 +45,11 @@ DIRTY_KEYS = ("staged", "modified", "untracked", "deleted", "conflicted")
 # long enough that a keypress rarely pays it. Pass --refresh when it matters.
 GIT_TTL = int(os.environ.get("WORKCTL_GIT_TTL", "300"))
 PR_TTL = int(os.environ.get("WORKCTL_PR_TTL", "300"))
+
+# The login changes about never, so pay `gh api user` once a week at most.
+AUTHOR_TTL = int(os.environ.get("WORKCTL_AUTHOR_TTL", "604800"))
+
+CONFIG_NAME = ".workctl.toml"
 
 
 def cache_dir():
@@ -85,7 +91,12 @@ def run(cmd, cwd=None, allow_failure=False):
     `gh pr checks` exits non-zero when a check failed, which is the case
     workctl cares about most, so pass allow_failure for it.
     """
-    out = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True)
+    try:
+        out = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True)
+    except OSError:
+        # A root's config may name a repository whose folder is not cloned yet,
+        # and that cwd raises rather than failing the command.
+        return ""
     return out.stdout if allow_failure or out.returncode == 0 else ""
 
 
@@ -97,7 +108,7 @@ def parallel(func, items, limit=12):
         return list(pool.map(func, items))
 
 
-# --- the workspace and its units -------------------------------------------
+# --- the root and its configuration ----------------------------------------
 
 def subdirs(path):
     try:
@@ -107,41 +118,214 @@ def subdirs(path):
 
 
 def is_checkout(path):
-    return os.path.isfile(os.path.join(path, ".git"))
+    """Whether a directory is a git checkout.
+
+    A worktree carries `.git` as a file, a plain clone as a directory.
+    """
+    return os.path.exists(os.path.join(path, ".git"))
 
 
-def work_dir(workspace=None):
-    return os.path.join(workspace or WORKSPACE, "work")
+def git_common_dir(path):
+    """The shared git directory of a checkout: its `.bare` or its `.git`."""
+    text = run(["git", "-C", path, "rev-parse", "--path-format=absolute",
+                "--git-common-dir"]).strip()
+    return os.path.realpath(text) if text else None
 
 
-def bare_repos(workspace=None):
-    root = workspace or WORKSPACE
-    return [d for d in subdirs(root) if os.path.isdir(os.path.join(root, d, ".bare"))]
+def repo_folder_of(checkout):
+    """The repository folder a checkout belongs to, or None outside git."""
+    common = git_common_dir(checkout)
+    return os.path.dirname(common) if common else None
+
+
+def repo_name_of(checkout):
+    """The name of the repository folder a checkout belongs to."""
+    folder = repo_folder_of(checkout)
+    return os.path.basename(folder) if folder else None
+
+
+def find_root(start=None):
+    """The root a directory sits in, or None when there is none."""
+    base = os.path.realpath(start or os.getcwd())
+    folder = repo_folder_of(base)
+    if folder:
+        return os.path.dirname(folder)
+
+    names = {"work", ".workctl"}
+    configured = os.environ.get("WORKCTL_WORK_DIR")
+    if configured:
+        names.add(configured)
+    path = base
+    while True:
+        if os.path.isfile(os.path.join(path, CONFIG_NAME)):
+            return path
+        if any(os.path.isdir(os.path.join(path, name)) for name in names):
+            return path
+        parent = os.path.dirname(path)
+        if parent == path:
+            return None
+        path = parent
+
+
+_ROOTS = {}
+
+
+def resolve_root(explicit=None, start=None):
+    """The root a command works in, from the flag, the disk or the environment.
+
+    Where you stand beats WORKCTL_ROOT, so a shell profile can export a default
+    root without overriding the root you are standing in.
+    """
+    key = (explicit, start)
+    if key in _ROOTS:
+        return _ROOTS[key]
+
+    found = explicit or find_root(start) or os.environ.get("WORKCTL_ROOT")
+    if not found:
+        sys.exit("workctl: no root found. Pass --root DIR, run the command "
+                 "inside a root, or set WORKCTL_ROOT to the root you mean.")
+
+    root = os.path.realpath(os.path.expanduser(found))
+    _ROOTS[key] = root
+    return root
+
+
+_CONFIG = {}
+
+
+def load_config(root):
+    """The root's `.workctl.toml`, or {} when it is absent or unreadable."""
+    key = os.path.realpath(root)
+    if key not in _CONFIG:
+        try:
+            with open(os.path.join(key, CONFIG_NAME), "rb") as handle:
+                _CONFIG[key] = tomllib.load(handle)
+        except (OSError, tomllib.TOMLDecodeError):
+            _CONFIG[key] = {}
+    return _CONFIG[key]
+
+
+_WORK_DIR = None
+
+
+def work_dir(root=None):
+    """The path of the root's work folder."""
+    root = root or resolve_root()
+    name = (_WORK_DIR
+            or load_config(root).get("work-dir")
+            or os.environ.get("WORKCTL_WORK_DIR")
+            or "work")
+    return os.path.join(root, name)
+
+
+def archive_dir(root):
+    """The path where a settled unit's notes go."""
+    return os.path.join(root, load_config(root).get("archive-dir") or ".archive")
+
+
+def branch_prefix(root):
+    """The prefix every branch workctl creates carries."""
+    return (load_config(root).get("branch-prefix")
+            or os.environ.get("WORKCTL_BRANCH_PREFIX")
+            or "misakwa/")
+
+
+# --- the repositories under a root -----------------------------------------
+
+def repos(root):
+    """Every repository folder directly under the root."""
+    work = os.path.basename(work_dir(root))
+    found = []
+    for name in subdirs(root):
+        if name.startswith(".") or name == work:
+            continue
+        path = os.path.join(root, name)
+        if os.path.isdir(os.path.join(path, ".bare")) or is_checkout(path):
+            found.append(name)
+    return found
+
+
+_ACTIVE = {}
+
+
+def active_repos(root):
+    """The repositories that hold a unit checkout, plus the ones config names.
+
+    The board then costs what the work in progress costs, rather than what the
+    folder holds: a root with 30 clones and 3 units still scans 3 repositories.
+    """
+    key = os.path.realpath(root)
+    if key in _ACTIVE:
+        return _ACTIVE[key]
+
+    checkouts = [c for unit in derive_units(root) for c in unit.checkouts]
+    found = []
+    for folder in parallel(repo_folder_of, checkouts):
+        if folder and os.path.dirname(folder) == key:
+            name = os.path.basename(folder)
+            if name not in found:
+                found.append(name)
+    for name in load_config(root).get("repos") or []:
+        if name not in found:
+            found.append(name)
+    _ACTIVE[key] = sorted(found) or repos(root)
+    return _ACTIVE[key]
+
+
+def scan_repos(root, all_repos=False):
+    """The repositories a command scans: the active ones, or every one."""
+    return repos(root) if all_repos else active_repos(root)
 
 
 def add_root_arg(ap):
-    """Register the shared --root flag.
+    """Register the shared --root and --work-dir flags.
 
     Named root, not workspace: workctl also creates a herdr workspace per
     unit, and one flag called --workspace read as that one.
     """
-    ap.add_argument("--root", dest="root", default=WORKSPACE, metavar="DIR",
-                    help="directory holding the bare repositories "
-                         "(default: %(default)s)")
+    ap.add_argument("--root", dest="root", default=None, metavar="DIR",
+                    help="directory holding the repositories "
+                         "(default: found from the current directory)")
+    ap.add_argument("--work-dir", dest="work_dir", default=None, metavar="NAME",
+                    action=_WorkDir,
+                    help="name of the folder holding the units (default: work)")
 
 
-def primary_worktree(repo, workspace=None):
+def add_repo_scope_arg(ap):
+    """Register the shared --all-repos flag."""
+    ap.add_argument("--all-repos", dest="all_repos", action="store_true",
+                    help="scan every repository under the root, not only "
+                         "those holding a unit")
+
+
+class _WorkDir(argparse.Action):
+    """Apply --work-dir the moment it parses, so `work_dir` sees it."""
+
+    def __call__(self, parser, namespace, value, option_string=None):
+        global _WORK_DIR
+        _WORK_DIR = value
+        setattr(namespace, self.dest, value)
+
+
+def primary_worktree(repo, root):
     """The repository's own default-branch checkout, where `wt` commands run."""
-    root = workspace or WORKSPACE
+    known = (_FORGE.get(repo) or {}).get("main")
+    if known and os.path.isdir(known):
+        return known
+    folder = os.path.join(root, repo)
+    if is_checkout(folder):
+        return folder
     for branch in ("main", "master"):
-        path = os.path.join(root, repo, branch)
+        path = os.path.join(folder, branch)
         if os.path.isdir(path):
             return path
     return None
 
 
+# --- the units -------------------------------------------------------------
+
 class Unit:
-    """One directory under work/, with every checkout inside it."""
+    """One directory under the work folder, with every checkout inside it."""
 
     def __init__(self, name, root, checkouts):
         self.name = name
@@ -246,16 +430,16 @@ def all_checkouts(root, max_depth=SCAN_DEPTH):
     return found
 
 
-def derive_units(workspace=None):
-    """Every unit in the workspace, derived from the folder structure alone."""
-    base = work_dir(workspace)
+def derive_units(root=None):
+    """Every unit under the root, derived from the folder structure alone."""
+    base = work_dir(root or resolve_root())
     units = []
     for name in subdirs(base):
-        root = os.path.join(base, name)
-        checkouts = checkouts_of(root)
+        unit_root = os.path.join(base, name)
+        checkouts = checkouts_of(unit_root)
         nested = []
-        for child_name in subdirs(root):
-            child = os.path.join(root, child_name)
+        for child_name in subdirs(unit_root):
+            child = os.path.join(unit_root, child_name)
             if is_checkout(child):
                 continue
             deep = [os.path.join(child, g) for g in subdirs(child)
@@ -263,59 +447,76 @@ def derive_units(workspace=None):
             if deep:
                 nested.append(Unit(f"{name}/{child_name}", child, deep))
         if checkouts or not nested:
-            units.append(Unit(name, root, checkouts))
+            units.append(Unit(name, unit_root, checkouts))
         units += nested
     return units
 
 
-def find_unit(name, workspace=None):
+def find_unit(name, root=None):
     """The unit with this name, or a parent standing for its sub-units.
 
     A directory holding only sub-units is not a unit itself, but it is still a
     natural thing to name. `INC-355` gathers the checkouts of
     `INC-355/prod-eks-tf` and `INC-355/karpenter-termination-grace`.
     """
-    units = derive_units(workspace)
+    root = root or resolve_root()
+    units = derive_units(root)
     for unit in units:
         if unit.name == name:
             return unit
     children = [u for u in units if u.name.startswith(name + "/")]
     if children:
-        root = os.path.join(work_dir(workspace), name)
-        return Unit(name, root, [c for u in children for c in u.checkouts])
+        unit_root = os.path.join(work_dir(root), name)
+        return Unit(name, unit_root, [c for u in children for c in u.checkouts])
     return None
 
 
 # --- worktrunk: the git facts ----------------------------------------------
 
-def git_facts(workspace=None, repos=None, refresh=False):
+_FORGE = {}
+
+
+def git_facts(root=None, repos=None, refresh=False, all_repos=False):
     """Map each checkout's real path to (repo, worktrunk record).
 
     Worktrunk owns the git side: the branch, the dirty state, ahead and behind,
     and whether the branch already landed. Its `pr` and `checks` fields arrive
     incomplete, so the forge facts come from gh instead.
     """
-    root = workspace or WORKSPACE
-    names = repos if repos is not None else bare_repos(root)
+    root = root or resolve_root()
+    names = list(repos) if repos is not None else scan_repos(root, all_repos)
 
     def load(repo):
         cwd = primary_worktree(repo, root)
         text = run(["wt", "list", "--format", "json"], cwd=cwd) if cwd else ""
-        return repo, (json.loads(text)["items"] if text else [])
+        report = json.loads(text) if text else {}
+        forge = (report.get("repo") or {}).get("forge") or {}
+        items = report.get("items") or []
+        main = next((i["worktree"]["path"] for i in items
+                     if (i.get("worktree") or {}).get("main")), None)
+        return repo, {"owner": forge.get("owner") or "",
+                      "name": forge.get("name") or repo,
+                      "main": main or ""}, items
 
     def build():
-        index = {}
-        for repo, items in parallel(load, names, limit=max(len(names), 1)):
+        index, forge = {}, {}
+        for repo, facts, items in parallel(load, names, limit=max(len(names), 1)):
+            forge[repo] = facts
             for item in items:
                 path = (item.get("worktree") or {}).get("path")
                 if path:
                     index[os.path.realpath(path)] = (repo, item)
-        return index
+        return index, forge
 
-    return cached("git", (root, tuple(names)), GIT_TTL, build,
-                  encode=lambda idx: [[p, r, it] for p, (r, it) in idx.items()],
-                  decode=lambda rows: {p: (r, it) for p, r, it in rows},
-                  refresh=refresh)
+    index, forge = cached(
+        "git", (root, tuple(names)), GIT_TTL, build,
+        encode=lambda pair: {"items": [[p, r, it] for p, (r, it) in pair[0].items()],
+                             "forge": pair[1]},
+        decode=lambda blob: ({p: (r, it) for p, r, it in blob["items"]},
+                             blob["forge"]),
+        refresh=refresh)
+    _FORGE.update(forge)
+    return index
 
 
 def is_dirty(item):
@@ -325,6 +526,45 @@ def is_dirty(item):
 
 # --- GitHub: the forge facts -----------------------------------------------
 
+def owner_for(repo, root=None):
+    """The forge owner of a repository: vectara in vectara/platform."""
+    owner = (_FORGE.get(repo) or {}).get("owner")
+    if not owner and root:
+        owner = _owner_in(run(["git", "remote", "get-url", "origin"],
+                              cwd=os.path.join(root, repo)).strip())
+    if not owner and root:
+        owner = load_config(root).get("owner")
+    return owner or os.environ.get("WORKCTL_OWNER", "")
+
+
+def _owner_in(url):
+    """The owner in git@host:owner/name.git or https://host/owner/name.git."""
+    text = url.rstrip("/")
+    if text.endswith(".git"):
+        text = text[:-4]
+    parts = text.replace(":", "/").split("/")
+    return parts[-2] if len(parts) > 1 else ""
+
+
+def forge_name(repo):
+    """The repository's name on the forge, which may differ from its folder."""
+    return (_FORGE.get(repo) or {}).get("name") or repo
+
+
+def default_author():
+    """The login whose pull requests count as his."""
+    if os.environ.get("WORKCTL_AUTHOR"):
+        return os.environ["WORKCTL_AUTHOR"]
+
+    def build():
+        return (run(["gh", "api", "user", "--jq", ".login"]).strip()
+                or run(["git", "config", "user.name"]).strip())
+
+    return cached("author", "gh", AUTHOR_TTL, build,
+                  encode=lambda login: {"login": login},
+                  decode=lambda blob: blob["login"])
+
+
 def pr_facts(repos=None, owner=None, workspace=None, refresh=False):
     """Map (repo, branch) to its open pull request.
 
@@ -332,13 +572,14 @@ def pr_facts(repos=None, owner=None, workspace=None, refresh=False):
     same call answers HTTP 504 on repositories this size, so checks come later
     and only for the pull requests that matched a unit.
     """
-    names = repos if repos is not None else bare_repos(workspace)
-    who = owner or OWNER
+    root = workspace or resolve_root()
+    names = list(repos) if repos is not None else active_repos(root)
     fields = "number,headRefName,reviewDecision,isDraft,url,author"
 
     def load(repo):
-        text = run(["gh", "pr", "list", "--repo", f"{who}/{repo}", "--state", "open",
-                    "--json", fields, "--limit", str(PR_LIMIT)])
+        who = owner or owner_for(repo, root)
+        text = run(["gh", "pr", "list", "--repo", f"{who}/{forge_name(repo)}",
+                    "--state", "open", "--json", fields, "--limit", str(PR_LIMIT)])
         return repo, (json.loads(text) if text else [])
 
     def build():
@@ -348,7 +589,7 @@ def pr_facts(repos=None, owner=None, workspace=None, refresh=False):
                 index[(repo, pr["headRefName"])] = pr
         return index
 
-    return cached("pr", (who, tuple(names), PR_LIMIT), PR_TTL, build,
+    return cached("pr", (root, owner, tuple(names), PR_LIMIT), PR_TTL, build,
                   encode=lambda idx: [[r, b, pr] for (r, b), pr in idx.items()],
                   decode=lambda rows: {(r, b): pr for r, b, pr in rows},
                   refresh=refresh)
@@ -365,18 +606,19 @@ def is_own_pr(pr, author=None):
     that someone else's would hide real work.
     """
     login = pr_author(pr)
-    return not login or login == (author or AUTHOR)
+    return not login or login == (author or default_author())
 
 
-def failing_checks(pairs, owner=None, ignored=None):
+def failing_checks(pairs, owner=None, ignored=None, root=None):
     """Map (repo, number) to the names of its genuinely failing checks."""
-    who = owner or OWNER
     skip = IGNORED_CHECKS if ignored is None else ignored
 
     def load(key):
         repo, number = key
+        who = owner or owner_for(repo, root)
         names = []
-        for line in run(["gh", "pr", "checks", str(number), "--repo", f"{who}/{repo}"],
+        for line in run(["gh", "pr", "checks", str(number),
+                         "--repo", f"{who}/{forge_name(repo)}"],
                         allow_failure=True).splitlines():
             parts = line.split("\t")
             if len(parts) > 1 and parts[1] == "fail":
@@ -397,18 +639,19 @@ query($owner: String!, $repo: String!, $number: Int!) {
 """
 
 
-def unresolved_threads(pairs, owner=None):
+def unresolved_threads(pairs, owner=None, root=None):
     """Map (repo, number) to its count of unresolved review threads.
 
     An approved pull request can still carry an unanswered question. Merging it
     then drops that feedback silently, so the board needs to see it.
     """
-    who = owner or OWNER
 
     def load(key):
         repo, number = key
+        who = owner or owner_for(repo, root)
         text = run(["gh", "api", "graphql", "-f", f"query={UNRESOLVED_QUERY}",
-                    "-F", f"owner={who}", "-F", f"repo={repo}", "-F", f"number={number}"])
+                    "-F", f"owner={who}", "-F", f"repo={forge_name(repo)}",
+                    "-F", f"number={number}"])
         try:
             nodes = json.loads(text)["data"]["repository"]["pullRequest"]["reviewThreads"]["nodes"]
         except (KeyError, TypeError, ValueError):
@@ -426,13 +669,17 @@ def outside_units(git, workspace=None):
     checkouts deeper than a sub-unit. The board never mentions these, so an
     open pull request can sit in one unseen.
     """
-    root = os.path.realpath(workspace or WORKSPACE)
-    held = {os.path.realpath(c) for u in derive_units(workspace) for c in u.checkouts}
+    root = os.path.realpath(workspace or resolve_root())
+    held = {os.path.realpath(c) for u in derive_units(root) for c in u.checkouts}
     primaries = {os.path.realpath(p)
-                 for p in (primary_worktree(r, workspace) for r in bare_repos(workspace))
+                 for p in (primary_worktree(r, root) for r in repos(root))
                  if p}
     found = []
     for path, (repo, item) in git.items():
+        # A plain clone is its own primary worktree, and it sits directly under
+        # the root, so the path rules below would read it as a stray checkout.
+        if (item.get("worktree") or {}).get("main"):
+            continue
         if path in held or path in primaries:
             continue
         rest = path[len(root) + 1:] if path.startswith(root + os.sep) else ""
@@ -552,7 +799,7 @@ def sessions_for(unit, kinds, depth=DEPTH):
 _SESSION = None
 
 
-def herdr_session():
+def herdr_session(root=None):
     """The name of the herdr session to talk to, or None when none runs.
 
     Herdr supports named sessions, and the default one is often not the live
@@ -578,11 +825,11 @@ def herdr_session():
     socket = os.environ.get("HERDR_SOCKET_PATH")
     chosen = next((s for s in running if s.get("socket_path") == socket), None) if socket else None
 
-    # Otherwise pick the session that actually holds this workspace. Preferring
+    # Otherwise pick the session that actually holds this root. Preferring
     # the default session is wrong: a stray `herdr` launches an empty one, and
     # the real work then sits in a named session nobody would find.
-    if chosen is None and len(running) > 1:
-        chosen = max(running, key=lambda s: _workspaces_under(s["name"], WORKSPACE))
+    if chosen is None and root and len(running) > 1:
+        chosen = max(running, key=lambda s: _workspaces_under(s["name"], root))
     if chosen is None and running:
         chosen = running[0]
 
@@ -591,7 +838,7 @@ def herdr_session():
 
 
 def _workspaces_under(session, root):
-    """How many of a session's workspaces sit inside this workspace directory."""
+    """How many of a session's workspaces sit inside this root."""
     out = subprocess.run(["herdr", "--session", session, "workspace", "list"],
                          capture_output=True, text=True)
     if out.returncode != 0:
@@ -625,7 +872,6 @@ def herdr(args, quiet=False):
     out = subprocess.run(["herdr"] + prefix + args, capture_output=True, text=True)
     if out.returncode != 0:
         if not quiet:
-            import sys
             print(f"  herdr {' '.join(args)}: {out.stderr.strip()}", file=sys.stderr)
         return None
     try:

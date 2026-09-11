@@ -12,7 +12,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
 from _workctl import (IGNORED_CHECKS, add_root_arg, agents_by_unit, derive_units,
                       failing_checks, find_unit, git_facts, is_checkout, is_dirty,
-                      pr_author, pr_facts, run)
+                      pr_author, pr_facts, resolve_root, run, work_dir)
 
 
 def human_size(size):
@@ -47,24 +47,32 @@ def note_files(root):
     return notes
 
 
-def agents_of(unit, units):
+def sub_units_of(unit, units):
+    """The sub-units a parent name stands for, empty when the unit is its own.
+
+    A directory holding only sub-units is not a unit, yet `find_unit` accepts
+    its name, so the report has to say which parts it gathered.
+    """
+    if unit.name in {u.name for u in units}:
+        return []
+    return [u.name for u in units if u.name.startswith(unit.name + "/")]
+
+
+def agents_of(unit, units, subs):
     """The unit's agents, plus its sub-units' when the name stands for them.
 
     `find_unit` gathers the checkouts of every sub-unit under a parent name, so
     the agents follow the same rule and the two halves of the report agree.
     """
     found = agents_by_unit(units)
-    names = [unit.name]
-    if unit.name not in {u.name for u in units}:
-        names += [u.name for u in units if u.name.startswith(unit.name + "/")]
-    return [agent for name in names for agent in found.get(name, [])]
+    return [agent for name in [unit.name] + subs for agent in found.get(name, [])]
 
 
 def git_probe(checkout):
     """The same facts read straight from git, for a checkout worktrunk misses.
 
-    A unit may hold a worktree of a repository that lives outside the bare
-    workspace, and `wt list` only ever reports the repositories inside it.
+    A unit may hold a checkout of a repository that lives outside the root,
+    and `wt list` only ever reports the repositories inside it.
     """
     origin = run(["git", "-C", checkout, "config", "--get", "remote.origin.url"]).strip()
     repo = os.path.basename(origin).removesuffix(".git") or None
@@ -111,7 +119,8 @@ def collect(unit, units, workspace, ignore, refresh=False):
         row["pr"] = prs.get((row["repo"], row["branch"]))
 
     pairs = {(row["repo"], row["pr"]["number"]) for row in rows if row["pr"]}
-    checks = failing_checks(pairs, ignored=IGNORED_CHECKS | set(ignore))
+    checks = failing_checks(pairs, ignored=IGNORED_CHECKS | set(ignore),
+                            root=workspace)
     for row in rows:
         if row["pr"]:
             row["failures"] = checks.get((row["repo"], row["pr"]["number"]), [])
@@ -121,12 +130,13 @@ def collect(unit, units, workspace, ignore, refresh=False):
     held = {os.path.realpath(c) for u in units for c in u.checkouts}
     hidden = [os.path.relpath(p, unit.root) for p in unit.hidden_checkouts()
               if os.path.realpath(p) not in held]
-    return dict(name=unit.name, root=unit.root, age=unit.age_days,
+    subs = sub_units_of(unit, units)
+    return dict(name=unit.name, root=unit.root, age=unit.age_days, sub_units=subs,
                 checkouts=rows, notes=note_files(unit.root), hidden=hidden,
                 agents=[dict(name=a.get("name"), kind=a.get("agent"),
                              status=a.get("agent_status"), pane=a.get("pane_id"),
                              cwd=a.get("foreground_cwd") or a.get("cwd"))
-                        for a in agents_of(unit, units)])
+                        for a in agents_of(unit, units, subs)])
 
 
 def render_checkout(row):
@@ -156,6 +166,13 @@ def render_checkout(row):
 
 def render(report):
     print(report["name"])
+    if report["sub_units"]:
+        count = len(report["sub_units"])
+        print(f"  parent of {count} sub-unit{'' if count == 1 else 's'}; "
+              f"the checkouts below are theirs:")
+        for name in report["sub_units"]:
+            print(f"    {name}")
+        print("  `workctl done` takes a sub-unit name, not the parent")
     print(f"  {report['root']}")
     print(f"  {report['age']} days since the newest change")
 
@@ -182,7 +199,7 @@ def render(report):
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("name", help="unit name, as it appears under work/")
+    ap.add_argument("name", help="unit name, as it appears under the work folder")
     add_root_arg(ap)
     ap.add_argument("--ignore-check", action="append", default=[],
                     help="check name to treat as noise (repeatable)")
@@ -190,11 +207,12 @@ def main():
     ap.add_argument("--refresh", action="store_true",
                     help="ignore the cache and re-read worktrunk and GitHub")
     args = ap.parse_args()
+    args.root = resolve_root(args.root)
 
     units = derive_units(args.root)
     unit = find_unit(args.name, args.root)
     if not unit:
-        sys.exit(f"no unit named {args.name} under {args.root}/work")
+        sys.exit(f"no unit named {args.name} under {work_dir(args.root)}")
 
     report = collect(unit, units, args.root, args.ignore_check, refresh=args.refresh)
     if args.json:

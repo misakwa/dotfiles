@@ -18,7 +18,7 @@ import sys
 import tempfile
 
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
-from _workctl import add_root_arg, run
+from _workctl import add_root_arg, resolve_root, run
 
 
 def board_rows(workspace, refresh=False):
@@ -83,6 +83,7 @@ def main():
     ap.add_argument("--refresh", action="store_true",
                     help="rebuild the board's git and pull request caches first")
     args = ap.parse_args()
+    args.root = resolve_root(args.root)
 
     if args.apply and args.dry_run:
         sys.exit("--apply and --dry-run contradict each other")

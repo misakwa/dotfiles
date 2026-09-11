@@ -8,15 +8,16 @@
 With no name, prints every unit name one per line, so it composes with fzf:
 
     workctl go "$(workctl go | fzf)"
+
+On a terminal that listing grows the unit paths, and a header per root.
 """
 import argparse
-import json
 import os
-import subprocess
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
-from _workctl import add_root_arg, derive_units, find_unit, herdr, herdr_running
+from _workctl import (add_root_arg, derive_units, find_unit, herdr,
+                      find_root, herdr_session, resolve_root, work_dir)
 
 
 def snapshot():
@@ -58,8 +59,10 @@ def score(space, panes, unit_root, unit_name):
     if any(inside(os.path.realpath(c), unit_root) for c in cwds):
         return 2
     # herdr reports no cwd of its own for a workspace, so the label workctl new
-    # wrote is the last thing left to match on.
-    if space.get("label") == unit_name:
+    # wrote is the last thing left to match on. Two roots can hold units of the
+    # same name, so a workspace sitting somewhere else must not answer on a
+    # label alone: every cwd above was outside this unit.
+    if not cwds and space.get("label") == unit_name:
         return 1
     return 0
 
@@ -96,23 +99,115 @@ def create_workspace(unit):
     return 0
 
 
+def open_roots(root):
+    """Every other root herdr currently has a workspace in.
+
+    `go` needs herdr anyway, so the live session answers "which roots am I
+    working in" and workctl keeps no list of its own.
+    """
+    data = snapshot()
+    seen, found = set(), []
+    for pane in (data or {}).get("panes") or []:
+        for cwd in (pane.get("cwd"), pane.get("foreground_cwd")):
+            if not cwd or cwd in seen:
+                continue
+            seen.add(cwd)
+            other = find_root(cwd)
+            if other and other not in found and os.path.realpath(other) != root:
+                found.append(other)
+    return found
+
+
+def locate(name, root):
+    """The unit with this name, and the root that holds it.
+
+    A name is unique inside one root, not across roots, so the resolved root
+    answers first. Only when it has no such unit do the roots open in herdr get
+    to answer, and two of them answering is a question workctl cannot settle.
+    """
+    unit = find_unit(name, root)
+    if unit:
+        return unit, root
+
+    others = open_roots(root)
+    hits = [(found, other) for found, other
+            in ((find_unit(name, other), other) for other in others) if found]
+    if len(hits) > 1:
+        print(f"workctl go: {name} names a unit in {len(hits)} roots:",
+              file=sys.stderr)
+        for found, _ in hits:
+            print(f"  {found.root}", file=sys.stderr)
+        print("pass --root DIR to choose one", file=sys.stderr)
+        sys.exit(2)
+    if hits:
+        unit, other = hits[0]
+        print(f"{name} is in {other}", file=sys.stderr)
+        return unit, other
+    return None, root
+
+
+def tilde(path):
+    home = os.path.expanduser("~")
+    return "~" + path[len(home):] if path.startswith(home + os.sep) else path
+
+
+def print_names(root):
+    """One unit name per line, which is what the fzf line above feeds back."""
+    for unit in derive_units(root):
+        print(unit.name)
+
+
+def print_units(root):
+    units = derive_units(root)
+    if not units:
+        print("  no units yet")
+        return
+    width = max(len(unit.name) for unit in units) + 6
+    parents = set()
+    for unit in units:
+        parent = unit.name.partition("/")[0]
+        if parent != unit.name:
+            if parent not in parents:
+                print(f"  {parent}")
+            # The whole name, not the suffix, so a copied line still names the
+            # unit. The indent alone groups the sub-unit under its parent.
+            label = f"    {unit.name}"
+        else:
+            label = f"  {unit.name}"
+        parents.add(parent)
+        print(f"{label:<{width}}{os.path.relpath(unit.root, root)}")
+
+
+def print_tree(root):
+    """The listing a person reads: the resolved root, then the ones herdr holds."""
+    roots = [root] + open_roots(root)
+    for index, each in enumerate(roots):
+        if index:
+            print()
+        print(tilde(each))
+        print_units(each)
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("name", nargs="?", help="unit name; omit to list every unit")
     add_root_arg(ap)
     args = ap.parse_args()
+    args.root = resolve_root(args.root)
 
     if not args.name:
-        for unit in derive_units(args.root):
-            print(unit.name)
+        if sys.stdout.isatty():
+            print_tree(args.root)
+        else:
+            print_names(args.root)
         return 0
 
-    unit = find_unit(args.name, args.root)
+    unit, root = locate(args.name, args.root)
     if not unit:
-        sys.exit(f"no unit named {args.name} under {args.root}/work")
+        sys.exit(f"no unit named {args.name} under {work_dir(args.root)}")
 
-    if not herdr_running():
+    if herdr_session(root) is None:
         sys.exit("herdr is not running; start it with `herdr`, then run this again")
 
     space = find_workspace(unit)

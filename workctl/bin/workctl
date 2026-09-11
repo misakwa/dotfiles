@@ -17,6 +17,9 @@ import sys
 PREFIX = "workctl_"
 DEFAULT = "board"
 
+# Commands that were renamed. The old name still works, and says so once.
+RETIRED = {"agent-sessions": "sessions"}
+
 HOME = os.path.expanduser("~")
 
 
@@ -67,13 +70,16 @@ def describe(name):
 
 
 def is_unit(name):
-    """Whether the workspace holds a unit by this name."""
+    """Whether a root holds a unit by this name."""
     sys.path.insert(0, own_dir())
     try:
-        from _workctl import find_unit
+        from _workctl import find_root, find_unit
     except ImportError:
         return False
-    return find_unit(name) is not None
+    # Resolving the root here must never exit: an unknown command outside any
+    # root still deserves the usage listing.
+    root = find_root()
+    return root is not None and find_unit(name, root) is not None
 
 
 def usage(stream=sys.stdout):
@@ -99,6 +105,10 @@ def main(argv):
     implied = not argv or argv[0].startswith("-")
     name = DEFAULT if implied else argv[0]
     args = argv if implied else argv[1:]
+
+    if name in RETIRED:
+        print(f"workctl: {name} is now {RETIRED[name]}", file=sys.stderr)
+        name = RETIRED[name]
 
     path = find(name)
     if not path:

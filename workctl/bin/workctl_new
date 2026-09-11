@@ -10,10 +10,10 @@ branch <prefix><name>, and the label of the herdr workspace. Pass it once. A
 sub-unit name such as INC-355/x takes the branch <prefix>INC-355-x.
 
 Drives worktrunk to create each checkout, so worktrunk's hooks, base-branch
-handling, and gates all apply. Overrides the worktree path for each call so the
-checkouts land at work/<name>/<repo> rather than under worktrunk's own
-template. Then creates a herdr workspace at the unit root, when herdr is
-running.
+handling, and gates all apply. Gives worktrunk the absolute target path for
+each call, so the checkouts land at work/<name>/<repo> rather than under
+worktrunk's own template. Then creates a herdr workspace at the unit root, when
+herdr is running.
 
 Pass --from to attach a branch or pull request that already exists, in any form
 `wt switch` accepts: `--from misakwa/some-branch`, `--from pr:7749`, or the
@@ -30,12 +30,9 @@ import subprocess
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
-from _workctl import (BRANCH_PREFIX, add_root_arg, bare_repos, herdr, herdr_running,
-                      is_checkout, primary_worktree, work_dir)
-
-# Worktrunk cannot strip a prefix from a branch name in a path template, so the
-# unit name is substituted here and the template supplies only the repo name.
-PATH_TEMPLATE = '{{ repo_path }}/../../work/%s/{{ remote_repo }}'
+from _workctl import (add_root_arg, branch_prefix, herdr, herdr_running,
+                      is_checkout, primary_worktree, repos, resolve_root,
+                      work_dir)
 
 
 def branch_exists(workspace, repo, branch):
@@ -90,16 +87,20 @@ def create_checkout(workspace, repo, name, branch, base, source, dry_run):
     """
     cwd = primary_worktree(repo, workspace)
     if not cwd:
-        print(f"  {repo}: no primary worktree (expected {repo}/main or {repo}/master)",
+        print(f"  {repo}: no checkout to run worktrunk in "
+              f"(expected {repo} itself, or {repo}/main or {repo}/master)",
               file=sys.stderr)
         return None
 
-    target = os.path.join(workspace, "work", name, repo)
+    target = os.path.join(work_dir(workspace), name, repo)
     if os.path.isdir(target):
         print(f"  {repo}: kept, already at {target}")
         return target
 
-    cmd = ["wt", "--config-set", f'worktree-path="{PATH_TEMPLATE % name}"', "switch"]
+    # A template cannot name the target: it counts directory levels, which
+    # differ between a bare repository and a plain clone, and it names the repo
+    # as the forge does, which the folder need not match.
+    cmd = ["wt", "--config-set", f'worktree-path="{target}"', "switch"]
     if source:
         cmd += [source, "--no-cd", "-y"]
     else:
@@ -205,13 +206,15 @@ def launch_agent(name, kind, root, pane, dry_run):
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("name", help="unit name; becomes work/<name>/ and the branch suffix")
+    ap.add_argument("name", help="unit name; becomes <name>/ under the work "
+                                 "folder and the branch suffix")
     ap.add_argument("--repo", action="append", default=[], metavar="REPO",
-                    help="repository to include (repeatable); omit for a notes-only unit")
+                    help="repository under the root to include (repeatable); "
+                         "omit for a notes-only unit")
     ap.add_argument("--base", metavar="REF", help="base branch (default: the repo's default)")
     ap.add_argument("--branch", metavar="NAME",
-                    help=f"branch name (default: {BRANCH_PREFIX}<name>, "
-                         f"with / in the name replaced by -)")
+                    help="branch name (default: the root's branch prefix and "
+                         "<name>, with / in the name replaced by -)")
     ap.add_argument("--from", dest="source", metavar="REF",
                     help="attach an existing branch or pull request (pr:N) "
                          "instead of creating a branch")
@@ -222,15 +225,20 @@ def main():
                     help="launch an agent on the new unit (default claude)")
     ap.add_argument("--dry-run", action="store_true", help="print what would happen")
     args = ap.parse_args()
+    args.root = resolve_root(args.root)
 
     if args.source and (args.base or args.branch):
         ap.error("--from attaches a branch as it is; it takes no --base or --branch")
     if args.source and not args.repo:
         ap.error("--from needs a --repo to attach the branch in")
 
-    known = bare_repos(args.root)
+    if args.name.count("/") > 1:
+        sys.exit(f"{args.name} is three levels deep. A unit holds sub-units one "
+                 f"level below it, and nothing below those.")
+
+    known = repos(args.root)
     if not known:
-        sys.exit(f"no bare repository under {args.root}\n"
+        sys.exit(f"no git repository under {args.root}\n"
                  f"--root is the directory that holds them. The unit name is "
                  f"the positional argument and takes no flag.")
 
@@ -241,7 +249,7 @@ def main():
 
     work = os.path.normpath(work_dir(args.root))
     root = os.path.normpath(os.path.join(work, args.name))
-    branch = args.branch or f"{BRANCH_PREFIX}{args.name.replace('/', '-')}"
+    branch = args.branch or f"{branch_prefix(args.root)}{args.name.replace('/', '-')}"
     existing = os.path.isdir(root)
 
     holder = checkout_above(root, work) if args.repo else None
@@ -249,7 +257,14 @@ def main():
         where = "is a checkout" if holder == root else f"sits inside the checkout {holder}"
         sys.exit(f"{root} {where}; a worktree cannot hold another worktree")
 
-    print(f"{args.name}: {root}" + (" (exists; adding to it)" if existing else ""))
+    note = " (exists; adding to it)" if existing else ""
+    if "/" in args.name:
+        parent, sub_name = args.name.split("/", 1)
+        print(f"{args.name}: the sub-unit {sub_name} of the unit {parent}, "
+              f"which is as deep as a unit goes")
+        print(f"path: {root}{note}")
+    else:
+        print(f"{args.name}: {root}{note}")
     if args.source:
         print(f"from: {args.source}")
     elif args.repo:

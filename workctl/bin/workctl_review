@@ -15,7 +15,7 @@ import sys
 import tempfile
 
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
-from _workctl import add_root_arg, find_unit, run
+from _workctl import add_root_arg, find_unit, resolve_root, run, work_dir
 
 
 def merge_base(checkout):
@@ -78,10 +78,11 @@ def main():
                       help="uncommitted changes only, untracked files included")
     ap.set_defaults(mode="branch")
     args, passthrough = ap.parse_known_args()
+    args.root = resolve_root(args.root)
 
     unit = find_unit(args.name, args.root)
     if not unit:
-        sys.exit(f"no unit named {args.name} under {args.root}/work")
+        sys.exit(f"no unit named {args.name} under {work_dir(args.root)}")
     if not unit.checkouts:
         sys.exit(f"{args.name} holds only notes; there is nothing to diff")
 

@@ -5,11 +5,11 @@
 # ///
 """Move a checkout that no unit holds into work/<unit>/<repo>, so the board sees it.
 
-Worktrunk tracks every worktree of a bare repository, but the board reads
-only work/. A checkout at <root>/<repo>/<slug> or <root>/<name>/<repo> is
+Worktrunk tracks every worktree of a repository, but the board reads only the
+work folder. A checkout at <root>/<repo>/<slug> or <root>/<name>/<repo> is
 invisible to it, and so is any pull request open on it. This moves such a
-checkout with `git worktree move`, which keeps its `.bare/worktrees/*` link
-intact. Agent sessions stay recorded at the old path.
+checkout with `git worktree move`, which keeps its git worktree link intact.
+Agent sessions stay recorded at the old path.
 
 With no path it lists every checkout it could adopt and the unit each would
 get. Nothing on disk changes without --apply.
@@ -20,7 +20,8 @@ import subprocess
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
-from _workctl import (Unit, add_root_arg, git_facts, outside_units, primary_worktree,
+from _workctl import (Unit, add_repo_scope_arg, add_root_arg, git_facts,
+                      outside_units, primary_worktree, resolve_root,
                       sessions_for, work_dir)
 
 KINDS = {"claude", "codex", "pi"}
@@ -36,15 +37,22 @@ def unit_name_for(repo, path):
     return os.path.basename(os.path.dirname(path)) if name == repo else name
 
 
-def candidates(workspace, refresh):
+def target_of(workspace, unit, repo):
+    """Where a checkout would land, named from the root."""
+    return os.path.relpath(os.path.join(work_dir(workspace), unit, repo), workspace)
+
+
+def candidates(workspace, refresh, all_repos):
     """Every checkout outside the model, as (repo, path, branch, unit, skip reason)."""
     work = os.path.realpath(work_dir(workspace))
     rows = []
-    for repo, path, item in outside_units(git_facts(workspace, refresh=refresh), workspace):
+    git = git_facts(workspace, refresh=refresh, all_repos=all_repos)
+    for repo, path, item in outside_units(git, workspace):
         branch = "detached" if (item.get("worktree") or {}).get("detached") else item.get("branch")
         if path.startswith(work + os.sep):
             rows.append((repo, path, branch, None,
-                         "already under work/; moving it would flatten its grouping"))
+                         f"already under {os.path.basename(work)}/; moving it "
+                         f"would flatten its grouping"))
         else:
             rows.append((repo, path, branch, unit_name_for(repo, path), None))
     return rows
@@ -70,7 +78,7 @@ def list_candidates(rows, workspace):
         return 0
     for repo, path, branch, unit, why in rows:
         rel = os.path.relpath(path, workspace)
-        target = f"-> work/{unit}/{repo}" if unit else f"skip: {why}"
+        target = f"-> {target_of(workspace, unit, repo)}" if unit else f"skip: {why}"
         print(f"  {rel:<60} {branch or '?':<40} {target}")
     print("\nworkctl adopt <path> [--unit NAME] --apply moves one of them")
     return 0
@@ -103,7 +111,8 @@ def adopt(args, rows):
 
     print(f"{rel}: {repo} on {branch or '?'}")
     print(f"mode: {'APPLY' if args.apply else 'DRY RUN, pass --apply to move'}")
-    print(f"   {'move' if args.apply else 'would move'} {rel} -> work/{unit}/{repo}")
+    print(f"   {'move' if args.apply else 'would move'} {rel} -> "
+          f"{target_of(args.root, unit, repo)}")
     if os.path.isdir(unit_root):
         print(f"   joins the existing unit {unit}")
     left = [n for n in os.listdir(os.path.dirname(path))
@@ -134,6 +143,7 @@ def main():
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("path", nargs="?", help="checkout to adopt; omit to list the candidates")
     add_root_arg(ap)
+    add_repo_scope_arg(ap)
     ap.add_argument("--unit", metavar="NAME",
                     help="unit to move it under (default: named from the source directory)")
     ap.add_argument("--apply", action="store_true",
@@ -141,11 +151,12 @@ def main():
     ap.add_argument("--refresh", action="store_true",
                     help="ignore the cached git facts")
     args = ap.parse_args()
+    args.root = resolve_root(args.root)
 
     if not os.path.isdir(work_dir(args.root)):
-        sys.exit(f"no work/ directory under {args.root}")
+        sys.exit(f"no work folder at {work_dir(args.root)}")
 
-    rows = candidates(args.root, args.refresh)
+    rows = candidates(args.root, args.refresh, args.all_repos)
     if not args.path:
         return list_candidates(rows, args.root)
     return adopt(args, rows)

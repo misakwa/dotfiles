@@ -22,8 +22,9 @@ import subprocess
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
-from _workctl import (OWNER, add_root_arg, agents_by_unit, all_checkouts,
-                      derive_units, herdr, herdr_running, primary_worktree, run,
+from _workctl import (add_root_arg, agents_by_unit, all_checkouts, archive_dir,
+                      derive_units, herdr, herdr_running, owner_for,
+                      primary_worktree, repo_name_of, resolve_root, run,
                       work_dir)
 
 SETTLED_STATES = ("idle", "done")
@@ -44,6 +45,16 @@ def git(checkout, *args):
 
 
 def repo_of(checkout):
+    """The repository a checkout belongs to, named as its folder is.
+
+    The folder name is the one the root indexes by, so every path built from it
+    holds. The remote answers only when git cannot.
+    """
+    return repo_name_of(checkout) or forge_repo_of(checkout)
+
+
+def forge_repo_of(checkout):
+    """The repository's name on the forge, which the folder need not match."""
     url = (git(checkout, "remote", "get-url", "origin") or "").strip()
     if not url:
         return None
@@ -186,7 +197,7 @@ def step_working_tree(unit):
     return stop
 
 
-def step_branches(unit, row, owner):
+def step_branches(unit, row, owner, workspace):
     print("\n2. branches")
     facts = []
     for checkout in unit.checkouts:
@@ -198,7 +209,9 @@ def step_branches(unit, row, owner):
             facts.append(dict(label=label, repo=repo, branch=None, prs=[]))
             continue
         pushed = remote_state(checkout, branch)
-        prs = pull_requests(repo, branch, owner) if repo else []
+        who = owner or (owner_for(repo, workspace) if repo else None)
+        forge = forge_repo_of(checkout)
+        prs = pull_requests(forge, branch, who) if forge and who else []
         opened = [p for p in prs if p["state"] == "OPEN"]
         merged = [p for p in prs if p["state"] == "MERGED"]
         closed = [p for p in prs if p["state"] == "CLOSED"]
@@ -292,7 +305,7 @@ def step_archive(unit, workspace, records, apply_):
     print("\n5. archive")
     entries = payload_entries(unit)
     reviews = capture_hunk(unit)
-    dest = os.path.join(workspace, ".archive", unit.name)
+    dest = os.path.join(archive_dir(workspace), unit.name)
 
     hidden = unit.hidden_checkouts()
     if hidden:
@@ -304,7 +317,8 @@ def step_archive(unit, workspace, records, apply_):
               + ("" if n == 1 else "s") + " the unit does not:", file=sys.stderr)
         for path in hidden:
             print(f"  {path}", file=sys.stderr)
-        print("Moving them into the archive breaks their .bare/worktrees links.\n"
+        print("Moving them into the archive breaks the git worktree link of "
+              "each one.\n"
               "Move them out of the unit, or settle them by hand, then run "
               "workctl done again.", file=sys.stderr)
         return False
@@ -457,7 +471,8 @@ def main():
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("name", help="unit name, as it appears on the board")
     add_root_arg(ap)
-    ap.add_argument("--owner", default=OWNER)
+    ap.add_argument("--owner", default=None,
+                    help="forge owner (default: the one each repository reports)")
     ap.add_argument("--apply", action="store_true",
                     help="really settle the unit; without it nothing changes")
     ap.add_argument("--dry-run", action="store_true",
@@ -472,6 +487,7 @@ def main():
     ap.add_argument("--refresh", action="store_true",
                     help="rebuild the board's git and pull request caches first")
     args = ap.parse_args()
+    args.root = resolve_root(args.root)
 
     if args.apply and args.dry_run:
         sys.exit("--apply and --dry-run contradict each other")
@@ -513,7 +529,7 @@ def main():
     if step_working_tree(unit):
         return 1
 
-    facts = step_branches(unit, row, args.owner)
+    facts = step_branches(unit, row, args.owner, args.root)
     step_merged(facts)
 
     # A separate gate from --force-bucket. Settling behind an open pull request
