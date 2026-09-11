@@ -5,6 +5,11 @@
 # ///
 """Focus the herdr workspace for a unit, creating one when none exists.
 
+With `--attach`, hands this terminal to the unit's agent instead of focusing a
+workspace nobody is looking at. It starts the agent when none runs. Leave the
+agent with `ctrl+b q`; it keeps running in its pane. Use that when you work
+from a plain terminal rather than from the herdr window.
+
 With no name, prints every unit name one per line, so it composes with fzf:
 
     workctl go "$(workctl go | fzf)"
@@ -14,10 +19,16 @@ On a terminal that listing grows the unit paths, and a header per root.
 import argparse
 import os
 import sys
+import time
 
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
-from _workctl import (add_root_arg, derive_units, find_unit, herdr,
-                      find_root, herdr_session, resolve_root, work_dir)
+from _workctl import (add_root_arg, agent_name, attach_target, derive_units,
+                      find_unit, find_root, herdr, herdr_attach, herdr_call,
+                      herdr_session, live_agent, resolve_root, work_dir)
+
+# `agent start` needs a pane sitting at its shell prompt. A pane whose only
+# foreground process is the shell itself is that pane.
+SHELLS = {"zsh", "bash", "sh", "fish", "dash", "ksh"}
 
 
 def snapshot():
@@ -86,17 +97,97 @@ def find_workspace(unit):
 
 
 def create_workspace(unit):
+    """Make the unit's workspace. Returns (workspace id, root pane id)."""
     result = herdr(["workspace", "create", "--cwd", unit.root,
                     "--label", unit.name, "--focus"])
     if not result:
-        return 1
+        return None, None
     space_id = (result.get("workspace") or {}).get("workspace_id")
     print(f"created workspace {space_id} at {unit.root}")
 
     # No `herdr worktree open` here. It refuses a workspace whose own cwd is not
     # a git work tree, which a unit root never is, and refuses a linked worktree
     # too. `workctl sync` carries the branch state as tokens instead.
-    return 0
+    return space_id, (result.get("root_pane") or {}).get("pane_id")
+
+
+def pane_ready(pane_id):
+    """Whether `agent start` can take this pane.
+
+    It needs the pane's own shell in the foreground. A pane running anything
+    else, an editor or another agent, is not available.
+    """
+    info = herdr(["pane", "process-info", "--pane", pane_id], quiet=True)
+    names = [p.get("name") for p
+             in ((info or {}).get("process_info") or {}).get("foreground_processes", [])]
+    return bool(names) and all(name in SHELLS for name in names)
+
+
+def wait_ready(pane_id, seconds=10):
+    """A pane herdr just made has no prompt yet; its shell is still starting."""
+    deadline = time.time() + seconds
+    while time.time() < deadline:
+        if pane_ready(pane_id):
+            return True
+        time.sleep(0.25)
+    return False
+
+
+def free_pane(space_id):
+    """A pane in this workspace that `agent start` can take, or None."""
+    panes = (herdr(["pane", "list", "--workspace", space_id], quiet=True)
+             or {}).get("panes", [])
+    for pane in panes:
+        if not pane.get("agent") and pane_ready(pane["pane_id"]):
+            return pane["pane_id"]
+    return None
+
+
+def ensure_agent(unit, units, space_id, pane, kind):
+    """The handle for the unit's agent, starting one when none runs.
+
+    A live agent answers first, whatever started it. Otherwise the agent goes
+    in a free pane of the unit's own workspace, and a split provides one when
+    every pane is busy.
+    """
+    agent = live_agent(unit.name, units)
+    if agent:
+        return attach_target(agent)
+
+    pane = pane or free_pane(space_id)
+    if not pane:
+        # Split a named pane, never the focused one: the focus belongs to
+        # whichever client last touched herdr, which need not be this unit.
+        busy = (herdr(["pane", "list", "--workspace", space_id], quiet=True)
+                or {}).get("panes", [])
+        if not busy:
+            print(f"{unit.name}: workspace {space_id} has no pane", file=sys.stderr)
+            return None
+        split = herdr(["pane", "split", busy[0]["pane_id"], "--direction", "down",
+                       "--cwd", unit.root, "--no-focus"])
+        pane = ((split or {}).get("pane") or {}).get("pane_id")
+    if not pane:
+        print(f"{unit.name}: no pane to start {kind} in", file=sys.stderr)
+        return None
+
+    if not wait_ready(pane):
+        print(f"{unit.name}: pane {pane} is busy; nothing to start {kind} in",
+              file=sys.stderr)
+        return None
+
+    name = agent_name(unit.name)
+    print(f"{unit.name}: starting {kind} as {name} in pane {pane}", file=sys.stderr)
+    _, error = herdr_call(["agent", "start", name, "--kind", kind, "--pane", pane])
+
+    # A start that stops on a first-run prompt reports agent_not_ready, and the
+    # agent is running all the same. Ask herdr what is there rather than the
+    # exit status: attaching is how a person answers that prompt.
+    agent = live_agent(unit.name, units)
+    if not agent:
+        print(f"{unit.name}: herdr could not start {kind} in pane {pane}: {error}",
+              file=sys.stderr)
+        return None
+    return attach_target(agent)
 
 
 def open_roots(root):
@@ -192,6 +283,10 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("name", nargs="?", help="unit name; omit to list every unit")
+    ap.add_argument("--attach", action="store_true",
+                    help="hand this terminal to the unit's agent; ctrl+b q to leave")
+    ap.add_argument("--kind", default="claude",
+                    help="which agent --attach starts when none runs (default claude)")
     add_root_arg(ap)
     args = ap.parse_args()
     args.root = resolve_root(args.root)
@@ -211,14 +306,25 @@ def main():
         sys.exit("herdr is not running; start it with `herdr`, then run this again")
 
     space = find_workspace(unit)
-    if not space:
-        return create_workspace(unit)
+    pane = None
+    if space:
+        space_id = space.get("workspace_id")
+        if herdr(["workspace", "focus", space_id]) is None:
+            return 1
+        print(f"focused workspace {space_id} ({space.get('label') or unit.name})")
+    else:
+        space_id, pane = create_workspace(unit)
+        if not space_id:
+            return 1
 
-    space_id = space.get("workspace_id")
-    if herdr(["workspace", "focus", space_id]) is None:
+    if not args.attach:
+        return 0
+
+    target = ensure_agent(unit, derive_units(root), space_id, pane, args.kind)
+    if not target:
         return 1
-    print(f"focused workspace {space_id} ({space.get('label') or unit.name})")
-    return 0
+    print(f"attaching to {target}; ctrl+b q to leave", file=sys.stderr)
+    herdr_attach(target)
 
 
 if __name__ == "__main__":

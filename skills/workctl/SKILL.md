@@ -29,7 +29,8 @@ This skill carries only what `--help` cannot. For flags and arguments, ask the C
 | Start a unit, or add a repo to an existing one | `new`                       |
 | Bring a stray checkout under the work folder   | `adopt`                     |
 | Open the unit in herdr                         | `go`                        |
-| Start or resume the agent in a unit            | `agent`                     |
+| Open the unit and take its agent               | `go --attach`               |
+| Attach to, resume, or start a unit's agent     | `agent`                     |
 | Which agent sessions a unit holds              | `sessions`                  |
 | PRs, failing checks, review threads            | `pr`                        |
 | Review the whole unit as one diff              | `review`                    |
@@ -40,6 +41,25 @@ This skill carries only what `--help` cannot. For flags and arguments, ask the C
 `workctl <unit>` and `workctl board <unit>` both stop and point at `workctl show <unit>`.
 
 Attach an existing branch or pull request with `new --from <branch|pr:N|URL>`, the most common start, rather than creating the branch by hand and running `new` without it. When the branch is already checked out somewhere, `new` refuses and names the path; that is an `adopt` case.
+
+## Work without the herdr window
+
+herdr 0.9.0 attaches one server-owned terminal to the terminal you are standing
+in. The pane keeps running on the herdr server; you only borrow its screen.
+Leave it with `ctrl+b q`, which detaches and does not stop the agent.
+
+- `workctl agent <unit>` attaches to the unit's live agent when one runs. It
+  starts an agent only when none does. Pass `--new` for a second agent on
+  purpose, or `--no-attach` to resume in this terminal instead.
+- `workctl go <unit> --attach` also creates the workspace and starts the agent
+  when the unit has neither, then attaches.
+- The board and `show` print each agent's handle. herdr names an agent that
+  `workctl new` started, and answers for any other agent by its pane id.
+
+Two limits come from herdr. Only one terminal may hold an agent at a time, and
+a second attach is refused until the first leaves. Attaching resizes that
+terminal to your window, and the new size stays after you detach, so attach
+from a full-size window.
 
 ## Root resolution
 
@@ -85,7 +105,8 @@ The spot for the first one follows the user's own worktrunk `worktree-path` temp
 ## Boundaries
 
 - **A repository outside the resolved root.** `new` refuses it, `adopt` never lists it, the board marks the unit `?n/m repos not scanned`, and `done` stops on it. Create and remove those worktrees with plain `git -C <repo> worktree add|remove <root>/work/<unit>/<repo>`.
-- **herdr not running.** `go` needs it; `new --agent`, `sync`, and the last stage of `done` report "not running" and continue without it.
+- **herdr not running.** `go` needs it; `new --agent`, `sync`, and the last stage of `done` report "not running" and continue without it. `agent` falls back to running the agent in this terminal.
+- **Two herdr sessions.** workctl talks to one: the session that owns this pane, else the one holding the most workspaces in this root. It skips a session whose server is older than the `herdr` binary, because every agent command there fails. `WORKCTL_HERDR_SESSION` overrides the choice.
 - **Agent sessions recorded below the unit root.** `agent` resumes only sessions recorded at the unit root. `sessions <unit>` lists the rest as "below root", and `--move-to-root --apply` refiles them.
 
 ## When workctl is the wrong tool

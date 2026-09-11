@@ -11,8 +11,9 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
 from _workctl import (IGNORED_CHECKS, add_repo_scope_arg, add_root_arg,
-                      agents_by_unit, derive_units, failing_checks, find_unit,
-                      git_facts, is_dirty, is_own_pr, outside_units, pr_author,
+                      agents_by_unit, attach_target, derive_units,
+                      failing_checks, find_unit, git_facts, is_dirty,
+                      is_own_pr, outside_units, pr_author,
                       pr_facts, resolve_root, scan_repos, unresolved_threads,
                       work_dir)
 
@@ -53,7 +54,8 @@ def inspect(unit, git, prs, agents, held):
                 hidden=len(hidden_below(unit, held)), threads=0,
                 agents=[{"name": a.get("name"), "kind": a.get("agent"),
                          "status": a.get("agent_status"),
-                         "pane": a.get("pane_id")} for a in live])
+                         "pane": a.get("pane_id"),
+                         "handle": attach_target(a)} for a in live])
 
 
 def inspect_outside(repo, path, item, prs, root):
@@ -70,6 +72,11 @@ def inspect_outside(repo, path, item, prs, root):
                 n_checkouts=1, n_known=1, stray=0, hidden=0, threads=0, agents=[],
                 repo=repo, branch=item.get("branch"),
                 state=item["display"]["state"], bucket=OUTSIDE)
+
+
+# Buckets that exist because an agent wants a person. The board is where you
+# find them, so it says how to reach one.
+ATTACHABLE = ("BLOCKED", "READY")
 
 
 def bucket(unit):
@@ -118,7 +125,9 @@ def render(unit):
     if unit["threads"]:
         bits.append(f"{unit['threads']} unanswered")
     for agent in unit["agents"]:
-        bits.append(f"[{agent['kind'] or 'agent'}:{agent['status']}]")
+        # The handle, not just the state: it is what `herdr agent attach` takes
+        # for an agent herdr never named, where the pane is the only address.
+        bits.append(f"[{agent['handle']} {agent['kind'] or 'agent'}:{agent['status']}]")
     return f"  {unit['age']:>4}d  {unit['name']:<52} {' '.join(bits)}".rstrip()
 
 
@@ -219,7 +228,8 @@ def main():
         group = ordered([r for r in rows if r["bucket"] == name])
         if name not in wanted or not group:
             continue
-        print(f"== {name} ({len(group)})")
+        hint = "  attach with: workctl agent <unit>" if name in ATTACHABLE else ""
+        print(f"== {name} ({len(group)}){hint}")
         for row in group:
             print(render(row))
         print()

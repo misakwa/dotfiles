@@ -10,8 +10,9 @@ import os
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
-from _workctl import (IGNORED_CHECKS, add_root_arg, agents_by_unit, derive_units,
-                      failing_checks, find_unit, git_facts, is_checkout, is_dirty,
+from _workctl import (IGNORED_CHECKS, add_root_arg, agents_by_unit,
+                      attach_target, derive_units, failing_checks, find_unit,
+                      git_facts, is_checkout, is_dirty,
                       pr_author, pr_facts, resolve_root, run, work_dir)
 
 
@@ -135,6 +136,7 @@ def collect(unit, units, workspace, ignore, refresh=False):
                 checkouts=rows, notes=note_files(unit.root), hidden=hidden,
                 agents=[dict(name=a.get("name"), kind=a.get("agent"),
                              status=a.get("agent_status"), pane=a.get("pane_id"),
+                             handle=attach_target(a),
                              cwd=a.get("foreground_cwd") or a.get("cwd"))
                         for a in agents_of(unit, units, subs)])
 
@@ -189,8 +191,10 @@ def render(report):
 
     print(f"\nagents ({len(report['agents'])})")
     for agent in report["agents"]:
-        label = agent["name"] or agent["kind"] or "agent"
-        print(f"  {label}  {agent['status']}  {agent['cwd'] or ''}".rstrip())
+        print(f"  {agent['handle']}  {agent['kind'] or 'agent'}  {agent['status']}  "
+              f"{agent['cwd'] or ''}".rstrip())
+    if report["agents"]:
+        print(f"  attach with `workctl agent {report['name']}`, leave with ctrl+b q")
 
     print(f"\nnotes ({len(report['notes'])})")
     for note in report["notes"]:

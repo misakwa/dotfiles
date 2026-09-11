@@ -3,12 +3,16 @@
 # requires-python = ">=3.11"
 # dependencies = []
 # ///
-"""Resume the most recent agent session in a unit, or start a new one.
+"""Attach to the unit's live agent, resume its last session, or start a new one.
 
-Runs the agent with the unit root as its working directory, so it sees every
-repository in the unit as a subdirectory. Each agent knows its own history, so
-this picks the directory and the agent and then gets out of the way. Use
-`workctl sessions` to see what history a unit holds.
+An agent already running in a herdr pane answers first: this hands the terminal
+to it rather than starting a second agent on the same unit. Leave that terminal
+with `ctrl+b q`; the agent keeps running.
+
+With no live agent, runs the agent with the unit root as its working directory,
+so it sees every repository in the unit as a subdirectory. Each agent knows its
+own history, so this picks the directory and the agent and then gets out of the
+way. Use `workctl sessions` to see what history a unit holds.
 """
 import argparse
 import os
@@ -16,7 +20,9 @@ import shutil
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
-from _workctl import Unit, add_root_arg, find_unit, resolve_root, sessions_for, work_dir
+from _workctl import (Unit, add_root_arg, attach_target, derive_units, find_unit,
+                      herdr_attach, herdr_running, live_agent, resolve_root,
+                      sessions_for, work_dir)
 
 KINDS = ("claude", "codex", "pi")
 
@@ -58,6 +64,8 @@ def main():
                     help="which agent; default is the one with the newest session here")
     ap.add_argument("--new", action="store_true", help="start a fresh session")
     ap.add_argument("--pick", action="store_true", help="choose from the agent's own picker")
+    ap.add_argument("--no-attach", action="store_true",
+                    help="start an agent here even when one is live in herdr")
     add_root_arg(ap)
     ap.add_argument("--dry-run", action="store_true", help="print the command and stop")
     args, passthrough = ap.parse_known_args()
@@ -81,6 +89,20 @@ def main():
                  f"  {twin}  ({len(twin_rows)} session(s))\n"
                  f"Start the agent in the one you mean, or bring the checkout under "
                  f"{twin} in with `workctl adopt`.")
+    # A live agent beats any session file. Resuming beside it would leave two
+    # agents on one unit, and only one of them is the one the user left.
+    if not args.new and not args.no_attach and herdr_running():
+        agent = live_agent(unit.name, derive_units(args.root), args.kind)
+        if agent:
+            target = attach_target(agent)
+            print(f"{unit.name}: attaching to {agent.get('agent') or 'the agent'} "
+                  f"({target}, {agent.get('agent_status')}); ctrl+b q to leave",
+                  file=sys.stderr)
+            if args.dry_run:
+                print(f"would run: herdr agent attach {target}", file=sys.stderr)
+                return 0
+            herdr_attach(target)
+
     kind = args.kind or newest_kind(rows) or "claude"
     if not shutil.which(kind):
         sys.exit(f"{kind} is not on PATH")

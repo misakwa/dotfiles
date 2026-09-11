@@ -30,9 +30,9 @@ import subprocess
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
-from _workctl import (add_root_arg, branch_prefix, herdr, herdr_running,
-                      is_checkout, primary_worktree, repos, resolve_root,
-                      work_dir)
+from _workctl import (add_root_arg, agent_name, branch_prefix, derive_units,
+                      herdr, herdr_call, herdr_running, is_checkout, live_agent,
+                      primary_worktree, repos, resolve_root, work_dir)
 
 
 def branch_exists(workspace, repo, branch):
@@ -179,7 +179,7 @@ def attach_herdr(root, name, existing, workspace, dry_run):
     return workspace_id, root_pane
 
 
-def launch_agent(name, kind, root, pane, dry_run):
+def launch_agent(name, kind, root, pane, workspace, dry_run):
     """Start the agent on the new unit.
 
     Inside herdr the unit already has its own focused workspace, so start the
@@ -188,17 +188,23 @@ def launch_agent(name, kind, root, pane, dry_run):
     sibling = os.path.join(os.path.dirname(os.path.realpath(__file__)), "workctl_agent")
     if dry_run:
         where = f"herdr pane {pane}" if pane else "this terminal"
-        print(f"agent: would start {kind} for {name} in {where}")
+        print(f"agent: would start {kind} for {name} as {agent_name(name)} in {where}")
         return
 
     if pane:
-        started = herdr(["agent", "start", name.replace("/", "-"),
-                         "--kind", kind, "--pane", pane])
-        if started is not None:
-            print(f"agent: {kind} started in pane {pane}")
+        handle = agent_name(name)
+        _, error = herdr_call(["agent", "start", handle,
+                               "--kind", kind, "--pane", pane])
+
+        # A start that stops on a first-run prompt reports agent_not_ready, and
+        # the agent is running all the same. Ask herdr what is there rather than
+        # the exit status, or the fallback below starts a second one.
+        if live_agent(name, derive_units(workspace)):
+            print(f"agent: {kind} started in pane {pane} as {handle}")
+            print(f"agent: attach with `workctl agent {name}`, leave with ctrl+b q")
             return
-        print("agent: herdr could not start it there; falling back to this terminal",
-              file=sys.stderr)
+        print(f"agent: herdr could not start {kind} there: {error}; "
+              f"falling back to this terminal", file=sys.stderr)
 
     os.execv(sibling, [sibling, name, "--new", "--kind", kind])
 
@@ -295,7 +301,7 @@ def main():
         _, pane = attach_herdr(root, args.name, existing, args.root, args.dry_run)
 
     if args.agent:
-        launch_agent(args.name, args.agent, root, pane, args.dry_run)
+        launch_agent(args.name, args.agent, root, pane, args.root, args.dry_run)
         return 0
 
     print(f"\ncd {root}")

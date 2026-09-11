@@ -19,6 +19,7 @@ import concurrent.futures as futures
 import hashlib
 import json
 import os
+import re
 import subprocess
 import sys
 import time
@@ -170,6 +171,12 @@ def find_root(start=None):
 _ROOTS = {}
 
 
+# The root the running command settled on. herdr_session() needs it to pick
+# between two live sessions, and every command resolves a root before it asks
+# herdr anything, so record it here instead of threading it through each call.
+_RESOLVED_ROOT = None
+
+
 def resolve_root(explicit=None, start=None):
     """The root a command works in, from the flag, the disk or the environment.
 
@@ -187,6 +194,9 @@ def resolve_root(explicit=None, start=None):
 
     root = os.path.realpath(os.path.expanduser(found))
     _ROOTS[key] = root
+    global _RESOLVED_ROOT
+    if _RESOLVED_ROOT is None:
+        _RESOLVED_ROOT = root
     return root
 
 
@@ -814,12 +824,21 @@ def herdr_session(root=None):
         _SESSION = os.environ["WORKCTL_HERDR_SESSION"]
         return _SESSION
 
+    root = root or _RESOLVED_ROOT
+
     text = run(["herdr", "session", "list", "--json"], allow_failure=True)
     try:
         sessions = json.loads(text)["sessions"] if text else []
     except (json.JSONDecodeError, KeyError):
         sessions = []
     running = [s for s in sessions if s.get("running")]
+
+    # A server left behind by an upgrade answers `session list` and even
+    # `workspace list`, then fails every agent command with protocol_mismatch.
+    # Rule it out here, or the picker hands the whole run to a dead end.
+    if len(running) > 1:
+        compatible = [s for s in running if _session_compatible(s["name"])]
+        running = compatible or running
 
     # Inside a herdr pane, follow the session that owns this pane.
     socket = os.environ.get("HERDR_SOCKET_PATH")
@@ -835,6 +854,18 @@ def herdr_session(root=None):
 
     _SESSION = chosen["name"] if chosen else ""
     return _SESSION or None
+
+
+def _session_compatible(session):
+    """Whether this session's server speaks the protocol this client sends."""
+    out = subprocess.run(["herdr", "--session", session, "status", "server", "--json"],
+                         capture_output=True, text=True)
+    if out.returncode != 0:
+        return False
+    try:
+        return json.loads(out.stdout).get("compatible") is True
+    except json.JSONDecodeError:
+        return False
 
 
 def _workspaces_under(session, root):
@@ -865,21 +896,36 @@ def herdr_running():
     return herdr_session() is not None
 
 
-def herdr(args, quiet=False):
-    """Run a herdr command against the live session and return its `result`."""
+def herdr_call(args):
+    """Run a herdr command. Returns (result, error text); one of them is None.
+
+    Callers that decide for themselves what an error means use this. `agent
+    start` is the case: it reports agent_not_ready when the agent stops on a
+    first-run prompt, and the agent is running all the same.
+    """
     session = herdr_session()
     prefix = ["--session", session] if session else []
     out = subprocess.run(["herdr"] + prefix + args, capture_output=True, text=True)
     if out.returncode != 0:
-        if not quiet:
-            print(f"  herdr {' '.join(args)}: {out.stderr.strip()}", file=sys.stderr)
-        return None
-    try:
-        return json.loads(out.stdout).get("result")
-    except json.JSONDecodeError:
+        return None, out.stderr.strip() or f"exit status {out.returncode}"
+    if not out.stdout.strip():
         # Some commands succeed with no body at all, such as report-metadata.
-        # Only a non-zero exit means failure, so do not report None here.
-        return {}
+        # Only a non-zero exit means failure, so do not report an error here.
+        return {}, None
+    try:
+        return json.loads(out.stdout).get("result"), None
+    except json.JSONDecodeError:
+        # A body that is not JSON is plain text, which this caller cannot use.
+        # `agent read` is the one that does; it goes through herdr_text().
+        return None, "expected JSON, got text"
+
+
+def herdr(args, quiet=False):
+    """Run a herdr command against the live session and return its `result`."""
+    result, error = herdr_call(args)
+    if error and not quiet:
+        print(f"  herdr {' '.join(args)}: {error}", file=sys.stderr)
+    return result
 
 
 def agents_by_unit(units):
@@ -905,3 +951,57 @@ def agents_by_unit(units):
                 found.setdefault(name, []).append(agent)
                 break
     return found
+
+
+def agent_name(unit_name):
+    """A unit name as herdr accepts it: `[a-z][a-z0-9_-]{0,31}`.
+
+    herdr rejects an uppercase letter, a leading digit and anything over 32
+    characters. A unit name carries none of those rules, and the name is the
+    handle an attach takes, so fold one into the other here.
+    """
+    slug = re.sub(r"[^a-z0-9_-]", "-", unit_name.lower()).strip("-")
+    if not slug or not slug[0].isalpha():
+        slug = "u-" + slug
+    return slug[:32]
+
+
+def live_agent(name, units, kind=None):
+    """A unit's live agent, or None. A blocked one wins; it waits on a person."""
+    found = [a for a in agents_by_unit(units).get(name, [])
+             if kind is None or a.get("agent") == kind]
+    if not found:
+        return None
+    return next((a for a in found if a.get("agent_status") == "blocked"), found[0])
+
+
+def attach_target(agent):
+    """The herdr handle for one agent from `agent list`.
+
+    Prefer the name `workctl new` gave it. An agent started by hand is detected
+    but stays unnamed, and herdr then answers only to the pane that hosts it.
+    """
+    return agent.get("name") or agent.get("pane_id")
+
+
+def herdr_attach(target):
+    """Hand this terminal to a herdr agent. Does not return when it succeeds.
+
+    `agent attach` streams live terminal frames and reads stdin, so it has to
+    own the terminal. Never run it through herdr(), which captures both.
+    """
+    session = herdr_session()
+    prefix = ["--session", session] if session else []
+    os.execvp("herdr", ["herdr"] + prefix + ["agent", "attach", target])
+
+
+def herdr_text(args, quiet=False):
+    """Run a herdr command that answers in plain text, such as `agent read`."""
+    session = herdr_session()
+    prefix = ["--session", session] if session else []
+    out = subprocess.run(["herdr"] + prefix + args, capture_output=True, text=True)
+    if out.returncode != 0:
+        if not quiet:
+            print(f"  herdr {' '.join(args)}: {out.stderr.strip()}", file=sys.stderr)
+        return None
+    return out.stdout
