@@ -111,11 +111,22 @@ models:
     proxy: "http://127.0.0.1:${PORT}"
     ttl: 1800
 
-  # Winnow-E4B (Gemma 4 E4B fine-tune, Q8_0, 128K native context). Text only: no projector is downloaded.
-  # Sampling is the one stored in the GGUF.
+  # Winnow-E4B is a typed-decision model. It needs the winnow-server build from
+  # github.com/EldanRing/winnow-inference for POST /v1/systemone. Chat and /v1/models also work.
+  # Flags are the apple-silicon launch flags that scripts/winnow.py prints. Text only, 8K context.
+  # Send "winnow":{"temperature":1.2574172017327816} with systemone requests, the Q8 calibration.
   winnow-e4b:
-    cmd: "${srv} --jinja ${qw_gpu} -m ${models_dir}/Winnow-E4B/gguf/Winnow-E4B-Q8_0.gguf -c 131072 --temp 1.0 --top-p 0.95 --top-k 64"
+    cmd: |
+      ${env.HOME}/Projects/winnow-inference/.build/bin/winnow-server \
+      --model ${models_dir}/Winnow-E4B/gguf/Winnow-E4B-Q8_0.gguf --alias Winnow-E4B \
+      --ctx-size 8192 --parallel 1 --n-gpu-layers 999 --fit off --flash-attn on \
+      --cache-type-k q8_0 --cache-type-v q8_0 --no-context-shift --offline --lazy-mode off \
+      --split-mode none --override-tensor '^(token_embd|per_layer_token_embd)\.weight$=MTL0' \
+      --batch-size 2048 --ubatch-size 1024 --threads 8 --host 127.0.0.1 --port ${PORT} \
+      --jinja --reasoning off --no-warmup --cache-ram 0 --no-mmproj --spec-type none
     proxy: "http://127.0.0.1:${PORT}"
+    useModelName: "Winnow-E4B"    # the server rejects any other model name
+    aliases: ["Winnow-E4B"]
     ttl: 1800
 
 # Concurrency via the matrix DSL.  & = together, | = mutually exclusive, () = group;
