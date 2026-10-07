@@ -111,6 +111,13 @@ models:
     proxy: "http://127.0.0.1:${PORT}"
     ttl: 1800
 
+  # Winnow-E4B (Gemma 4 E4B fine-tune, Q8_0, 128K native context). Text only: no projector is downloaded.
+  # Sampling is the one stored in the GGUF.
+  winnow-e4b:
+    cmd: "${srv} --jinja ${qw_gpu} -m ${models_dir}/Winnow-E4B/gguf/Winnow-E4B-Q8_0.gguf -c 131072 --temp 1.0 --top-p 0.95 --top-k 64"
+    proxy: "http://127.0.0.1:${PORT}"
+    ttl: 1800
+
 # Concurrency via the matrix DSL.  & = together, | = mutually exclusive, () = group;
 # any subset of a set is valid. evict_costs: higher = evicted last (embedder pinned).
 # Measured footprints @ full context (RSS, GB): glm 26.5 · qwen 33.2 · qwythos 17.2 ·
@@ -129,6 +136,7 @@ matrix:
     q36v: qwen3.6-35b-a3b-vision
     q38m: qwen3.8-27b
     q38n: qwen3.8-27b-nomtp
+    wn:   winnow-e4b
   evict_costs:
     emb: 100
   sets:
@@ -137,3 +145,4 @@ matrix:
     qwen:  "qwen & (oss | sm) & emb"        # Qwen + gpt-oss or smollm + embedder (<=49 GB)
     qwen36moe: "(q36m | q36v) & (oss | qwy | sm) & emb"  # 35B-A3B, text or vision, + any one light model + embedder (~49 GB est.)
     qwen38:    "(q38m | q38n) & (oss | qwy | sm) & emb"  # 3.8-27B, MTP or vision, + any one light model + embedder (~48 GB est.)
+    winnow:    "wn & (oss | qwy | sm) & emb"  # Winnow-E4B + any one light model + embedder (~25 GB est.)
