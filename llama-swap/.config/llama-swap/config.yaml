@@ -15,6 +15,29 @@ macros:
   models_dir: "${env.HOME}/models"                                   # no hardcoded /Users path
   srv: "/opt/homebrew/bin/llama-server --host 127.0.0.1 --port ${PORT}"
 
+  # Flags shared by the new Qwen entries. -np 1 is required by MTP, and on the others it
+  # keeps the whole context window in one slot instead of splitting it across parallel slots.
+  qw_gpu: "-ngl 99 -fa on -np 1"
+
+  # MTP draft settings. Measured on M1 Max: 3 beat 1, 2 and 4 on both Qwen models.
+  # For Qwen3.8 this only pairs with --model-draft in the entry. Retune the number here once.
+  mtp: "--spec-type draft-mtp --spec-draft-n-max 3"
+
+  qw_sampling: "--top-p 0.95 --top-k 20 --min-p 0 --presence-penalty 0 --repeat-penalty 1.0"
+
+  # preserve_thinking keeps earlier reasoning in context, which Qwen recommends for agent loops.
+  qw36_kwargs: >-
+    --chat-template-kwargs '{"preserve_thinking":true}'
+
+  # Qwen3.8 thinks at xhigh by default, which is slow on an M1 Max, so this uses medium.
+  # Delete reasoning_effort here to get the card default back.
+  qw38_kwargs: >-
+    --chat-template-kwargs '{"reasoning_effort":"medium","preserve_thinking":true}'
+
+  # Full command bases. Each entry adds only its model path, context size and any MTP or mmproj flags.
+  qw36: "${srv} --jinja ${qw_gpu} ${qw_sampling} ${qw36_kwargs} --temp 0.6"
+  qw38: "${srv} --jinja ${qw_gpu} ${qw_sampling} ${qw38_kwargs} --temp 1.0"
+
 models:
   glm-4.7-flash:
     cmd: "${srv} --jinja -m ${models_dir}/glm-4.7-flash-UD-Q4_K_XL.gguf -c 202752 --temp 0.7 --top-p 1.0 --min-p 0.01"
@@ -42,11 +65,58 @@ models:
     proxy: "http://127.0.0.1:${PORT}"
     ttl: 0          # never auto-unload — stays resident for AnythingLLM
 
+  # Qwen3.6-35B-A3B with MTP embedded in the GGUF. Text only. Fastest entry: about 85 tokens
+  # per second with MTP against 59 without, and 650 per second for prompts against 120 on the dense 27B.
+  # Qwen recommends at least 128K context for thinking to work well. Only 10 of 40 layers
+  # keep a KV cache, so 256K is cheap.
+  qwen3.6-35b-a3b:
+    cmd: |
+      ${qw36} \
+      -m ${models_dir}/Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf \
+      -c 262144 ${mtp}
+    proxy: "http://127.0.0.1:${PORT}"
+    ttl: 1800
+
+  # Same GGUF with the MTP flags removed and the projector added.
+  # Without --spec-type, llama.cpp ignores the embedded MTP head and runs a normal model.
+  qwen3.6-35b-a3b-vision:
+    cmd: |
+      ${qw36} \
+      -m ${models_dir}/Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf \
+      --mmproj ${models_dir}/Qwen3.6-35b-a3b.mmproj.gguf \
+      -c 262144
+    proxy: "http://127.0.0.1:${PORT}"
+    ttl: 1800
+
+  # Qwen3.8-27B with the separate MTP file from the Unsloth repo. Text only.
+  # Context is 128K, the minimum Qwen recommends. A 256K cache would add about 9 GB.
+  # If --model-draft is rejected, the same option is spelled --spec-draft-model.
+  qwen3.8-27b:
+    cmd: |
+      ${qw38} \
+      -m ${models_dir}/Qwen3.8-27B-UD-Q4_K_XL.gguf \
+      --model-draft ${models_dir}/Qwen3.8-27B-Q4_0.mtp.gguf \
+      -c 131072 ${mtp}
+    proxy: "http://127.0.0.1:${PORT}"
+    ttl: 1800
+
+  # Same model and sampling with MTP off and the projector added. Use it for image input
+  # and for the speed A/B against the MTP entry. The projector does not change text speed.
+  qwen3.8-27b-nomtp:
+    cmd: |
+      ${qw38} \
+      -m ${models_dir}/Qwen3.8-27B-UD-Q4_K_XL.gguf \
+      --mmproj ${models_dir}/Qwen3.8-27b.mmproj.gguf \
+      -c 131072
+    proxy: "http://127.0.0.1:${PORT}"
+    ttl: 1800
+
 # Concurrency via the matrix DSL.  & = together, | = mutually exclusive, () = group;
 # any subset of a set is valid. evict_costs: higher = evicted last (embedder pinned).
 # Measured footprints @ full context (RSS, GB): glm 26.5 · qwen 33.2 · qwythos 17.2 ·
 # gpt-oss 15.9 · smollm 10.3 · embedder 0.3. Sets keep any co-loaded combo under ~50 GB
 # (Metal compute ceiling ~54 GB). glm & qwen stay mutually exclusive (~59 GB together).
+# Every big model is mutually exclusive with the others, and with glm.
 matrix:
   vars:
     glm:  glm-4.7-flash
@@ -55,9 +125,15 @@ matrix:
     qwy:  qwythos-9b
     sm:   smollm3-3b
     emb:  nomic-embed-text
+    q36m: qwen3.6-35b-a3b
+    q36v: qwen3.6-35b-a3b-vision
+    q38m: qwen3.8-27b
+    q38n: qwen3.8-27b-nomtp
   evict_costs:
     emb: 100
   sets:
     light: "(oss & qwy & sm) & emb"        # gpt-oss + qwythos + smollm all co-load + embedder (~44 GB)
     glm:   "glm & (oss | qwy | sm) & emb"  # GLM + any one light model + embedder (<=44 GB)
     qwen:  "qwen & (oss | sm) & emb"        # Qwen + gpt-oss or smollm + embedder (<=49 GB)
+    qwen36moe: "(q36m | q36v) & (oss | qwy | sm) & emb"  # 35B-A3B, text or vision, + any one light model + embedder (~49 GB est.)
+    qwen38:    "(q38m | q38n) & (oss | qwy | sm) & emb"  # 3.8-27B, MTP or vision, + any one light model + embedder (~48 GB est.)
