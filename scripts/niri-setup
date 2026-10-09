@@ -1,0 +1,326 @@
+#!/usr/bin/env bash
+# niri-setup: install or remove a niri session next to sway. It records what it
+# adds under $STATE so that remove takes away only that, never packages sway uses.
+set -euo pipefail
+
+DOTFILES="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+PKG_DIR="$DOTFILES/niri"
+STATE="${XDG_STATE_HOME:-$HOME/.local/state}/niri-setup"
+CACHE="${XDG_CACHE_HOME:-$HOME/.cache}/niri-setup"
+NIRI_REF="v26.04"
+XWLS_REF="v0.8.3"
+BACKUP_SUFFIX=".pre-niri-setup"
+WALLPAPER="$HOME/.config/niri/wallpaper"
+WALLPAPER_CANDIDATES=(
+    /usr/share/backgrounds/default.png
+    /usr/share/backgrounds/warty-final-ubuntu.png
+    /usr/share/backgrounds/gnome/adwaita-d.jpg
+)
+
+usage() {
+    cat <<EOF
+Usage: $(basename "$0") <command> [--keep-packages]
+
+  install          Install niri and its companion tools, link the config,
+                   and enable the session's user units. Safe to re-run.
+  remove           Undo install: disable the units, unlink the config,
+                   restore files it moved aside, and uninstall what it added.
+  status           Show what is installed, linked and enabled.
+
+  --keep-packages  With remove: keep the packages and the built niri.
+EOF
+}
+
+say() { printf '==> %s\n' "$*"; }
+die() { printf 'niri-setup: %s\n' "$*" >&2; exit 1; }
+
+detect_distro() {
+    # shellcheck disable=SC1091
+    . /etc/os-release
+    case " ${ID:-} ${ID_LIKE:-} " in
+        *" fedora "*) echo fedora ;;
+        *" arch "*) echo arch ;;
+        *" ubuntu "* | *" debian "*) echo debian ;;
+        *) die "unsupported distribution: ${ID:-unknown}" ;;
+    esac
+}
+
+packages_for() {
+    local runtime=(waybar fuzzel swaylock swayidle swaybg xdg-desktop-portal-gnome
+        xdg-desktop-portal-gtk gnome-keyring mate-polkit wireplumber playerctl
+        brightnessctl gammastep udiskie wl-clipboard)
+    case "$1" in
+        fedora) echo niri xwayland-satellite mako "${runtime[@]}" ;;
+        arch) echo niri xwayland-satellite mako "${runtime[@]}" ;;
+        # No niri or xwayland-satellite package: both are built from source.
+        debian) echo mako-notifier xwayland "${runtime[@]}" \
+            gcc clang pkg-config git curl ca-certificates \
+            libudev-dev libgbm-dev libxkbcommon-dev libegl1-mesa-dev libwayland-dev \
+            libinput-dev libdbus-1-dev libsystemd-dev libseat-dev libpipewire-0.3-dev \
+            libpango1.0-dev libdisplay-info-dev libxcb1-dev libxcb-cursor-dev ;;
+    esac
+}
+
+is_installed() {
+    case "$DISTRO" in
+        fedora) rpm -q "$1" >/dev/null 2>&1 ;;
+        arch) pacman -Qi "$1" >/dev/null 2>&1 ;;
+        debian) [ "$(dpkg-query -W -f='${Status}' "$1" 2>/dev/null)" = "install ok installed" ] ;;
+    esac
+}
+
+record() {
+    local list="$STATE/$1"
+    shift
+    touch "$list"
+    printf '%s\n' "$@" | sort -u - "$list" -o "$list"
+}
+
+recorded() {
+    [ -f "$STATE/$1" ] && cat "$STATE/$1"
+    return 0
+}
+
+pkg_install() {
+    case "$DISTRO" in
+        fedora) sudo dnf install -y "$@" ;;
+        arch) sudo pacman -S --needed --noconfirm "$@" ;;
+        debian) sudo apt-get update && sudo apt-get install -y "$@" ;;
+    esac
+}
+
+install_packages() {
+    local missing=() pkg
+    # The dotfiles need stow and make, so they are installed but never recorded for removal.
+    for pkg in stow make; do
+        is_installed "$pkg" || pkg_install "$pkg"
+    done
+    for pkg in $(packages_for "$DISTRO"); do
+        is_installed "$pkg" || missing+=("$pkg")
+    done
+    if [ ${#missing[@]} -eq 0 ]; then
+        say "packages: all present"
+        return
+    fi
+    say "packages: installing ${missing[*]}"
+    pkg_install "${missing[@]}"
+    record packages "${missing[@]}"
+}
+
+remove_packages() {
+    local pkgs=() pkg
+    for pkg in $(recorded packages); do
+        is_installed "$pkg" && pkgs+=("$pkg")
+    done
+    if [ ${#pkgs[@]} -gt 0 ]; then
+        say "packages: removing ${pkgs[*]}"
+        case "$DISTRO" in
+            fedora) sudo dnf remove -y "${pkgs[@]}" ;;
+            arch) sudo pacman -Rns --noconfirm "${pkgs[@]}" ;;
+            debian)
+                sudo apt-get remove -y "${pkgs[@]}"
+                say "run 'sudo apt autoremove' to drop the libraries they pulled in"
+                ;;
+        esac
+    fi
+    rm -f "$STATE/packages"
+}
+
+checkout() {
+    local url="$1" ref="$2" dir="$3"
+    if [ -d "$dir/.git" ]; then
+        git -C "$dir" fetch --depth 1 origin tag "$ref"
+        git -C "$dir" checkout -q "$ref"
+    else
+        git clone --depth 1 --branch "$ref" "$url" "$dir"
+    fi
+}
+
+# noble's rustc is older than niri's minimum (1.85). A private toolchain under
+# $CACHE lets remove delete it without touching ~/.cargo.
+rust_toolchain() {
+    export RUSTUP_HOME="$CACHE/rustup" CARGO_HOME="$CACHE/cargo"
+    if [ ! -x "$CARGO_HOME/bin/cargo" ]; then
+        say "rust: installing a private toolchain into $CACHE"
+        curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs |
+            sh -s -- -y --profile minimal --no-modify-path
+    fi
+    export PATH="$CARGO_HOME/bin:$PATH"
+}
+
+install_file() {
+    local mode="$1" src="$2" dest="$3"
+    sudo install -Dm"$mode" "$src" "$dest"
+    record files "$dest"
+}
+
+build_from_source() {
+    if command -v niri >/dev/null && [ "$(niri --version | awk '{print "v"$2}')" = "$NIRI_REF" ] &&
+        command -v xwayland-satellite >/dev/null; then
+        say "build: niri $NIRI_REF already installed"
+        return
+    fi
+    rust_toolchain
+    mkdir -p "$CACHE/src"
+
+    say "build: xwayland-satellite $XWLS_REF"
+    checkout https://github.com/Supreeeme/xwayland-satellite "$XWLS_REF" "$CACHE/src/xwayland-satellite"
+    (cd "$CACHE/src/xwayland-satellite" && cargo build --release --locked)
+
+    say "build: niri $NIRI_REF"
+    checkout https://github.com/niri-wm/niri "$NIRI_REF" "$CACHE/src/niri"
+    (cd "$CACHE/src/niri" && cargo build --release --locked)
+
+    local niri="$CACHE/src/niri" xwls="$CACHE/src/xwayland-satellite"
+    install_file 755 "$xwls/target/release/xwayland-satellite" /usr/local/bin/xwayland-satellite
+    install_file 755 "$niri/target/release/niri" /usr/local/bin/niri
+    install_file 755 "$niri/resources/niri-session" /usr/local/bin/niri-session
+    install_file 644 "$niri/resources/niri.desktop" /usr/local/share/wayland-sessions/niri.desktop
+    install_file 644 "$niri/resources/niri-portals.conf" /usr/local/share/xdg-desktop-portal/niri-portals.conf
+    install_file 644 "$niri/resources/niri.service" /etc/systemd/user/niri.service
+    install_file 644 "$niri/resources/niri-shutdown.target" /etc/systemd/user/niri-shutdown.target
+}
+
+remove_built_files() {
+    local f
+    for f in $(recorded files); do
+        sudo rm -f "$f"
+    done
+    rm -f "$STATE/files"
+    rm -rf "$CACHE"
+}
+
+package_files() {
+    (cd "$PKG_DIR" && find . -type f | sed 's|^\./||')
+}
+
+units() {
+    (cd "$PKG_DIR/.config/systemd/user" && ls -- *.service)
+}
+
+# stow refuses to replace real files, e.g. the default config niri writes on first run.
+move_aside_conflicts() {
+    local rel target
+    for rel in $(package_files); do
+        target="$HOME/$rel"
+        if [ -e "$target" ] && [ ! -L "$target" ]; then
+            say "moving $target aside to $target$BACKUP_SUFFIX"
+            mv "$target" "$target$BACKUP_SUFFIX"
+            record backups "$target"
+        fi
+    done
+}
+
+restore_conflicts() {
+    local target
+    for target in $(recorded backups); do
+        if [ -e "$target$BACKUP_SUFFIX" ] && [ ! -e "$target" ]; then
+            mv "$target$BACKUP_SUFFIX" "$target"
+            say "restored $target"
+        fi
+    done
+    rm -f "$STATE/backups"
+}
+
+link_wallpaper() {
+    local candidate
+    if [ -e "$WALLPAPER" ] || [ -L "$WALLPAPER" ]; then
+        return
+    fi
+    for candidate in "${WALLPAPER_CANDIDATES[@]}"; do
+        if [ -f "$candidate" ]; then
+            ln -s "$candidate" "$WALLPAPER"
+            record wallpaper "$WALLPAPER"
+            say "wallpaper: $WALLPAPER -> $candidate"
+            return
+        fi
+    done
+    say "wallpaper: none found; point $WALLPAPER at an image to add one"
+}
+
+cmd_install() {
+    mkdir -p "$STATE"
+    install_packages
+    if [ "$DISTRO" = debian ]; then
+        build_from_source
+    fi
+
+    say "config: linking the niri package"
+    move_aside_conflicts
+    make -C "$DOTFILES" --no-print-directory stow-niri
+    link_wallpaper
+
+    say "units: enabling $(units | tr '\n' ' ')"
+    systemctl --user daemon-reload
+    # shellcheck disable=SC2046
+    systemctl --user enable $(units)
+
+    if niri validate >/dev/null 2>&1; then
+        say "config: valid"
+    else
+        niri validate
+        die "niri rejects the config; fix it and run install again"
+    fi
+    cat <<EOF
+
+niri is installed. To use it:
+  - Log out, pick "niri" on the login screen, and log in.
+  - Or test it in a window inside sway: run 'niri' in a terminal (Mod is Alt there).
+  - Press Mod+Shift+/ inside niri to see every key bind.
+EOF
+}
+
+cmd_remove() {
+    if systemctl --user is-active --quiet niri.service; then
+        die "a niri session is running; log out of it and run remove from sway or a TTY"
+    fi
+    if [ -d "$PKG_DIR/.config/systemd/user" ]; then
+        say "units: disabling"
+        # shellcheck disable=SC2046
+        systemctl --user disable $(units) 2>/dev/null || true
+    fi
+    say "config: unlinking the niri package"
+    make -C "$DOTFILES" --no-print-directory unstow-niri
+    systemctl --user daemon-reload
+    restore_conflicts
+    if [ -n "$(recorded wallpaper)" ]; then
+        rm -f "$WALLPAPER"
+        rm -f "$STATE/wallpaper"
+    fi
+    if [ "$KEEP_PACKAGES" = 1 ]; then
+        say "packages: kept (--keep-packages)"
+        return
+    fi
+    remove_built_files
+    remove_packages
+    rmdir "$STATE" 2>/dev/null || true
+    say "niri is removed"
+}
+
+cmd_status() {
+    local unit
+    echo "distro:   $DISTRO"
+    echo "niri:     $(command -v niri >/dev/null && niri --version || echo 'not installed')"
+    echo "config:   $(readlink "$HOME/.config/niri/config.kdl" || echo 'not linked')"
+    echo "recorded: $(recorded packages | wc -l) packages, $(recorded files | wc -l) built files"
+    for unit in $(units); do
+        printf 'unit:     %-24s %s\n' "$unit" "$(systemctl --user is-enabled "$unit" 2>/dev/null || echo disabled)"
+    done
+}
+
+[ "$(id -u)" -ne 0 ] || die "run as your user; the script calls sudo where it needs to"
+
+COMMAND="${1:-}"
+KEEP_PACKAGES=0
+if [ "${2:-}" = "--keep-packages" ]; then
+    KEEP_PACKAGES=1
+fi
+DISTRO="$(detect_distro)"
+
+case "$COMMAND" in
+    install) cmd_install ;;
+    remove) cmd_remove ;;
+    status) cmd_status ;;
+    -h | --help | help) usage ;;
+    *) usage >&2; exit 2 ;;
+esac

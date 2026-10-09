@@ -1,0 +1,12 @@
+[Unit]
+Description=Gammastep for the niri session
+PartOf=graphical-session.target
+After=graphical-session.target
+Requisite=graphical-session.target
+
+[Service]
+ExecStart=gammastep
+Restart=on-failure
+
+[Install]
+WantedBy=niri.service

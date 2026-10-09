@@ -74,6 +74,37 @@ ships with stow. Point it at the repo, not at `$HOME`: it walks whatever tree
 you give it, and against `$HOME` it reports every broken symlink on the system.
 It only reports — removal is the script's half.
 
+## niri
+
+`niri/` is a session for the [niri](https://niri-wm.github.io/niri/) scrolling
+compositor. It sits next to sway and does not replace it. It is not in
+`PACKAGES`, because `scripts/niri-setup` also installs software and enables units.
+
+```sh
+$ scripts/niri-setup install                  # packages, links, user units
+$ scripts/niri-setup status
+$ scripts/niri-setup remove                   # undo all of it
+$ scripts/niri-setup remove --keep-packages   # unlink only
+```
+
+On Fedora and Arch, the distro packages provide niri. Ubuntu 24.04 has no
+package. There the script builds niri and xwayland-satellite from source, with a
+private Rust toolchain in `~/.cache/niri-setup`, and installs them in `/usr/local`.
+
+The script records each package and file it adds in `~/.local/state/niri-setup`.
+`remove` takes away only those, so packages that sway uses stay. If a real file
+is in the place of a link, the script moves it to `<file>.pre-niri-setup`, and
+`remove` puts it back. An example is the default config that niri writes on its
+first run.
+
+The companion programs (waybar, mako, swaybg, swayidle, polkit agent, gammastep,
+udiskie) are user units with `WantedBy=niri.service`. They start with the niri
+session and never under sway. Put per-machine settings, such as `output` blocks
+for a dock, in `~/.config/niri/local.kdl`. The tracked config includes it last.
+
+To use niri, pick it on the login screen. To try it in a window under sway, run
+`niri` in a terminal. In that window, `Mod` is Alt.
+
 ## Repository structure
 
 Each top-level directory is a **stow package** for one tool (e.g. `tmux/`,

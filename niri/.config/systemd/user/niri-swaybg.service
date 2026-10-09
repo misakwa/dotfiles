@@ -1,0 +1,13 @@
+[Unit]
+Description=Wallpaper for the niri session
+PartOf=graphical-session.target
+After=graphical-session.target
+Requisite=graphical-session.target
+ConditionPathExists=%h/.config/niri/wallpaper
+
+[Service]
+ExecStart=swaybg -m fill -i %h/.config/niri/wallpaper
+Restart=on-failure
+
+[Install]
+WantedBy=niri.service

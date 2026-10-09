@@ -1,0 +1,14 @@
+[Unit]
+Description=Polkit authentication agent for the niri session
+PartOf=graphical-session.target
+After=graphical-session.target
+Requisite=graphical-session.target
+
+[Service]
+# The agent lives in /usr/libexec on Fedora and Ubuntu, and under /usr/lib/mate-polkit on Arch.
+ExecSearchPath=/usr/libexec:/usr/lib/mate-polkit
+ExecStart=polkit-mate-authentication-agent-1
+Restart=on-failure
+
+[Install]
+WantedBy=niri.service

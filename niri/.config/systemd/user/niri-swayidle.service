@@ -1,0 +1,16 @@
+[Unit]
+Description=Idle lock and screen blanking for the niri session
+PartOf=graphical-session.target
+After=graphical-session.target
+Requisite=graphical-session.target
+
+[Service]
+ExecStart=swayidle -w \
+    timeout 300 'niri msg action power-off-monitors' \
+    timeout 600 'swaylock -f -C %h/.config/niri/swaylock.conf' \
+    lock 'swaylock -f -C %h/.config/niri/swaylock.conf' \
+    before-sleep 'swaylock -f -C %h/.config/niri/swaylock.conf'
+Restart=on-failure
+
+[Install]
+WantedBy=niri.service
