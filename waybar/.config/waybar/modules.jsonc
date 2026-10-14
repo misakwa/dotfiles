@@ -1,63 +1,17 @@
 {
-  "ipc": true,
   "position": "bottom",
   "height": 30,
   "modules-left": [],
-  "modules-center": [
-    "sway/workspaces",
-    "wlr/taskbar",
-    "network",
-    "pulseaudio",
-    "idle_inhibitor",
-    "battery",
-    "clock"
-  ],
   "modules-right": [],
-  // Modules configuration
-  "sway/workspaces": {
-    "disable-scroll": true,
-    "all-outputs": true,
-    "format": "{icon}",
-    "persistent_workspaces": {
-      "1": [],
-      "2": [],
-      "3": [],
-      "4": [],
-      "5": [],
-      "6": [],
-      "7": [],
-      "8": [],
-      "9": [],
-      "10": []
-    },
-    "format-icons": {
-      "1": "一",
-      "2": "二",
-      "3": "三",
-      "4": "四",
-      "5": "五",
-      "6": "六",
-      "7": "七",
-      "8": "八",
-      "9": "九",
-      "10": "〇"
-    }
-  },
   "wlr/taskbar": {
     "format": "{icon}",
     "icon-size": 14,
     "icon-theme": "Numix-Circle",
     "tooltip-format": "{title}",
     "on-click": "activate",
-    // "on-click-middle": "close",
     "ignore-list": [
       "kitty"
-    ],
-    "rewrite": {
-      "Firefox Web Browser": "Firefox",
-      "Foot Server": "Terminal",
-      "Google Chrome": "Chrome"
-    }
+    ]
   },
   "idle_inhibitor": {
     "format": "{icon}",
@@ -84,14 +38,7 @@
         "weekdays": "<span color='#ffcc66'><b>{}</b></span>",
         "today": "<span color='#ff6699'><b><u>{}</u></b></span>"
       }
-    } //,
-    // "actions": {
-    //   "on-click-right": "mode",
-    //   "on-click-forward": "tz_up",
-    //   "on-click-backward": "tz_down",
-    //   "on-scroll-up": "shift_up",
-    //   "on-scroll-down": "shift_down"
-    // }
+    }
   },
   "battery": {
     "states": {
@@ -100,7 +47,7 @@
     },
     "format": "{icon} {capacity}%",
     "format-charging": "󰂄 {capacity}%",
-    "format-plugged": "󰂄{capacity}%",
+    "format-plugged": "󰂄 {capacity}%",
     "format-alt": "{icon} {time}",
     "format-full": "󱈑 {capacity}%",
     "format-icons": [
@@ -111,13 +58,13 @@
   },
   "network": {
     "format-wifi": "  {essid}",
-    "format-ethernet": "󰤮 Disconnected",
+    "format-ethernet": "󰈀 {ifname}",
     "format-linked": "{ifname} (No IP) ",
     "format-disconnected": "󰤮 Disconnected",
-    "tooltip-format-wifi": "Signal Strenght: {signalStrength}% | Down Speed: {bandwidthDownBits}, Up Speed: {bandwidthUpBits}"
+    "tooltip-format-wifi": "Signal strength: {signalStrength}% | Down: {bandwidthDownBits}, Up: {bandwidthUpBits}"
   },
   "pulseaudio": {
-    "on-click": "pactl set-sink-mute 45 toggle",
+    "on-click": "wpctl set-mute @DEFAULT_AUDIO_SINK@ toggle",
     "format": "{icon}  {volume}%",
     "format-bluetooth": "{volume}% {icon}",
     "format-muted": "󰖁 Muted",

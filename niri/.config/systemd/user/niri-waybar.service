@@ -5,7 +5,7 @@ After=graphical-session.target
 Requisite=graphical-session.target
 
 [Service]
-ExecStart=waybar -c %h/.config/niri/waybar/config.jsonc -s %h/.config/niri/waybar/style.css
+ExecStart=waybar -c %h/.config/waybar/niri.jsonc
 ExecReload=kill -SIGUSR2 $MAINPID
 Restart=on-failure
 

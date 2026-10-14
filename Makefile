@@ -27,7 +27,7 @@ PACKAGES    += launchd cmux
 SERVICE_MGR := launchd
 endif
 ifeq ($(detected_OS),Linux)
-PACKAGES    += systemd
+PACKAGES    += systemd waybar
 SERVICE_MGR := systemd
 endif
 

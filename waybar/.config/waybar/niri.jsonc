@@ -1,0 +1,31 @@
+{
+  "include": [
+    "~/.config/waybar/modules.jsonc"
+  ],
+  "modules-center": [
+    "niri/workspaces",
+    "wlr/taskbar",
+    "network",
+    "pulseaudio",
+    "idle_inhibitor",
+    "battery",
+    "clock"
+  ],
+  // Icons are looked up by workspace index only while no state keys (focused,
+  // active, empty) are set; style.css marks the focused one instead.
+  "niri/workspaces": {
+    "format": "{icon}",
+    "format-icons": {
+      "1": "一",
+      "2": "二",
+      "3": "三",
+      "4": "四",
+      "5": "五",
+      "6": "六",
+      "7": "七",
+      "8": "八",
+      "9": "九",
+      "10": "〇"
+    }
+  }
+}

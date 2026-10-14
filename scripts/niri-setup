@@ -248,6 +248,8 @@ cmd_install() {
     say "config: linking the niri package"
     move_aside_conflicts
     make -C "$DOTFILES" --no-print-directory stow-niri
+    # Shared with sway, so remove leaves it linked.
+    make -C "$DOTFILES" --no-print-directory stow-waybar
     link_wallpaper
 
     say "units: enabling $(units | tr '\n' ' ')"

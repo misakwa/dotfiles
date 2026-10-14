@@ -102,6 +102,11 @@ udiskie) are user units with `WantedBy=niri.service`. They start with the niri
 session and never under sway. Put per-machine settings, such as `output` blocks
 for a dock, in `~/.config/niri/local.kdl`. The tracked config includes it last.
 
+Both sessions use the bar in the `waybar/` package. `modules.jsonc` and
+`style.css` hold the shared modules and style. Each session adds its workspace
+module: sway reads `config.jsonc` from the default path, and the niri unit
+reads `niri.jsonc`. `remove` leaves this package linked, because sway uses it.
+
 To use niri, pick it on the login screen. To try it in a window under sway, run
 `niri` in a terminal. In that window, `Mod` is Alt.
 
